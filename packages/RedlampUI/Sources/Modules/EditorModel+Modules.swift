@@ -7,11 +7,23 @@ import Foundation
 public extension EditorModel {
     func showModule(_ next: AppModule) {
         guard next != module else { return }
+        let leavingDevelop = module == .develop
         previousModule = module
         module = next
         if next == .develop {
             openActivePhoto()
         }
+        if leavingDevelop {
+            finishLeavingDevelop()
+        }
+    }
+
+    /// The photo open in Develop wasn't rendered while it was shown, and nothing else starts its render now.
+    private func finishLeavingDevelop() {
+        if hasUnsavedChange {
+            saveNow()
+        }
+        editRenders.schedulePump()
     }
 
     /// G, E, C and N: the Library module, showing the grid, the loupe, Compare or Survey.
