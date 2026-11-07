@@ -24,7 +24,8 @@ import RedlampLibrary
 /// - Develop first: a render starts, and goes from one step to the next (opening the photo, rendering
 ///   it), only while no export runs and no dialog is open, Develop isn't shown or has asked for no frame
 ///   for `developQuiet` and isn't opening a photo, no thumbnail on screen waits, and the Mac isn't hot or
-///   saving power. The photo open in Develop waits until it's left. `statistics` counts the waits, and Develop's frames
+///   saving power. The photo open in Develop waits until it's left, and renders in Develop's engine while Develop
+///   keeps it open behind Library, where it's decoded already. `statistics` counts the waits, and Develop's frames
 /// asked for
 ///   while a step ran.
 /// - Bounded: one render at a time, cancelled when its photo leaves the source or its edit changes. The

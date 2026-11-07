@@ -49,37 +49,37 @@ extension EditRenders {
             }
             return
         }
-        guard await mayGoOn(rendering: photo), let engine = await workerEngine() else { return }
-        let opening = ContinuousClock.now
-        stepRunning = true
-        engine.expect(recipe.rawRevision, for: url)
-        let opened = try? await engine.open(url)
-        stepRunning = false
-        guard !Task.isCancelled else { return }
-        guard let info = opened else { return failed(photo, digest) }
-        var step = Statistics.Step(
-            pixels: info.pixelSize.width * info.pixelSize.height, opening: Self.seconds(.now - opening), rendering: 0,
-            storing: 0,
-        )
-        engineBytes += step.pixels * 32 / 3
-        if !engine.canRender(recipe.baseLook), let look = editor?.recipes.library.definition(for: recipe.baseLook) {
-            engine.registerBaseLook(look)
+        var step = Statistics.Step(pixels: 0, opening: 0, rendering: 0, storing: 0)
+        var rendered: CGImage?
+        if let render = await renderInDevelop(photo, recipe) {
+            (rendered, step.pixels, step.rendering) = render
+        } else {
+            guard await mayGoOn(rendering: photo), let engine = await workerEngine() else { return }
+            let opening = ContinuousClock.now
+            stepRunning = true
+            engine.expect(recipe.rawRevision, for: url)
+            let opened = try? await engine.open(url)
+            stepRunning = false
+            guard !Task.isCancelled else { return }
+            guard let info = opened else { return failed(photo, digest) }
+            step.pixels = info.pixelSize.width * info.pixelSize.height
+            step.opening = Self.seconds(.now - opening)
+            engineBytes += step.pixels * 32 / 3
+            if !engine.canRender(recipe.baseLook),
+               let look = editor?.recipes.library.definition(for: recipe.baseLook) {
+                engine.registerBaseLook(look)
+            }
+            // Without its look the engine renders the edit without it, which would be kept under its digest.
+            guard engine.canRender(recipe.baseLook) else { return failed(photo, digest) }
+            guard await mayGoOn(rendering: photo) else { return }
+            let rendering = ContinuousClock.now
+            stepRunning = true
+            rendered = try? await engine.renderStill(Self.stillRequest(recipe, info))
+            stepRunning = false
+            step.rendering = Self.seconds(.now - rendering)
         }
-        // Without its look the engine renders the edit without it, which would be kept under its digest.
-        guard engine.canRender(recipe.baseLook) else { return failed(photo, digest) }
-        var request = StillRequest(
-            recipe: EditorModel.asShot(recipe, info), maxLongEdge: PhotoStore.Tier.preview.pixelSize,
-            colorSpace: .displayP3, purpose: .preview,
-        )
-        request.source = url
-        guard await mayGoOn(rendering: photo) else { return }
-        let rendering = ContinuousClock.now
-        stepRunning = true
-        let rendered = try? await engine.renderStill(request)
-        stepRunning = false
         guard !Task.isCancelled else { return }
         guard let image = rendered else { return failed(photo, digest) }
-        step.rendering = Self.seconds(.now - rendering)
         let storing = ContinuousClock.now
         let keeping = claims(of: key, except: photo).union([digest])
         let (size, modified) = (item.size, item.modified)
@@ -98,6 +98,32 @@ extension EditRenders {
         }
         notify(photos)
         record(photos.map { Record(photo: $0, sidecarModified: item.sidecarModified, digest: digest) })
+    }
+
+    /// `recipe` rendered in Develop's engine, with its pixel count and seconds, while Develop keeps `photo` open
+    /// behind Library: it's decoded there already. Nil when it isn't, or the render didn't come: the renders' own
+    /// engine makes it then.
+    private func renderInDevelop(_ photo: PhotoAddress, _ recipe: EditRecipe) async
+        -> (image: CGImage, pixels: Int, seconds: Double)? {
+        guard await mayGoOn(rendering: photo), let editor, let info = editor.info, info.url == photo.url,
+              editor.opening == nil, editor.openVersion == photo.version, editor.engine.canRender(recipe.baseLook)
+        else { return nil }
+        let rendering = ContinuousClock.now
+        stepRunning = true
+        let rendered = try? await editor.engine.renderStill(Self.stillRequest(recipe, info))
+        stepRunning = false
+        guard let image = rendered else { return nil }
+        return (image, info.pixelSize.width * info.pixelSize.height, Self.seconds(.now - rendering))
+    }
+
+    /// What a render of `recipe` asks the engine with `info` open for.
+    private static func stillRequest(_ recipe: EditRecipe, _ info: ImageInfo) -> StillRequest {
+        var request = StillRequest(
+            recipe: EditorModel.asShot(recipe, info), maxLongEdge: PhotoStore.Tier.preview.pixelSize,
+            colorSpace: .displayP3, purpose: .preview,
+        )
+        request.source = info.url
+        return request
     }
 
     /// A render that couldn't be made, for `photo` and the file's other photos read with the same edit.

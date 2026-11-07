@@ -807,6 +807,8 @@ extension EditRendersTests {
         model.showModule(.library)
         try await fixture.eventually { fixture.renders.statistics.rendered == 1 }
         #expect(fixture.renders.statistics.rendered == 1)
+        #expect(fixture.editor.stills.last?.maxLongEdge == PhotoStore.Tier.preview.pixelSize)
+        #expect(fixture.engine.opened.withLock { $0.isEmpty }, "Develop's engine has it decoded already")
     }
 
     @Test func `a photo edited in Develop renders once another photo is opened there`() async throws {
@@ -829,6 +831,10 @@ extension EditRendersTests {
         model.select(fixture.photo("IMG_2.JPG"))
         try await fixture.eventually { fixture.renders.statistics.rendered == 1 }
         #expect(fixture.renders.statistics.rendered == 1)
+        #expect(
+            fixture.engine.opened.withLock { $0 } == [fixture.photo("IMG_1.JPG")],
+            "Develop's engine has moved on, so the renders' own opens it",
+        )
     }
 
     @Test func `leaving Develop saves the waiting change at once, and its render follows`() async throws {
