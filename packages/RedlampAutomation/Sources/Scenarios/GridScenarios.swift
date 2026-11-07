@@ -1,6 +1,7 @@
 #if DEBUG || REDLAMP_PROFILING
     import AppKit
     import Carbon.HIToolbox
+    import RedlampCanvas
     import RedlampEngineAPI
     @_spi(Harness) import RedlampUI
 
@@ -292,12 +293,19 @@
                 + "at 1:1 it doesn't browse",
             claims: [.feature("library.loupe")],
         ) { app in
-            let names = try app.showGrid()
+            _ = try app.showGrid()
             try app.press(.loupeView)
-            try app.wait("the loupe on \(names[0])") { model in
-                model.libraryView == .loupe && model.libraryViews.loupeZoom == .fit
-                    && model.selection?.lastPathComponent == names[0]
+            try app.wait("the loupe at Fit") { $0.libraryView == .loupe && $0.libraryViews.loupeZoom == .fit }
+            // The driver hands the wheel to the view it's over, past the app's monitors: Develop's canvas, under the
+            // Library, mustn't be the one to take it in the app.
+            let canvasTakes = {
+                try app.main { _ in
+                    Views.editorWindow.flatMap { window in
+                        Views.all(CanvasMetalView.self, in: window.contentView?.superview ?? NSView()).first
+                    }?.forwardsCoveredEvents
+                }
             }
+            try app.expect(try canvasTakes() == false, "Develop's canvas takes the loupe's scrolls")
             let shown = { try app.main { $0.selection?.lastPathComponent } }
             // The wheel goes the way ← and → do: towards you the next photo, away the one before.
             let first = try shown()
@@ -321,6 +329,7 @@
             try app.press(KeyCombo(.escape))
             try app.wait("Esc: the grid") { $0.libraryView == .grid }
             try app.backToDevelop()
+            try app.wait("Develop's canvas taking scrolls over its tools again") { _ in (try? canvasTakes()) == true }
         }
 
         static let sourceViews = Scenario(
