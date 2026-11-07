@@ -1273,6 +1273,9 @@ public final class EditorModel {
             versions = []
         }
         putAwayEditTools()
+        if module == .develop {
+            editRenders.schedulePump()
+        }
     }
 
     /// The metadata of the edit `url` opens in, from its row, until its sidecar is read.

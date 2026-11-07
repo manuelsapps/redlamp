@@ -809,6 +809,28 @@ extension EditRendersTests {
         #expect(fixture.renders.statistics.rendered == 1)
     }
 
+    @Test func `a photo edited in Develop renders once another photo is opened there`() async throws {
+        let fixture = EditRenderFixture()
+        defer { fixture.cleanUp() }
+        try fixture.photos(["IMG_1.JPG", "IMG_2.JPG"])
+        try await fixture.open(module: .develop)
+        let model = try #require(fixture.model)
+        try await fixture.eventually { model.info?.url == fixture.photo("IMG_1.JPG") }
+        try #require(model.info?.url == fixture.photo("IMG_1.JPG"))
+        let address = try #require(fixture.item("IMG_1.JPG")).address
+
+        model.setValue(.exposure, 1)
+        model.saveNow()
+        try await fixture.eventually { fixture.renders.known[address]?.state == .unrendered }
+        try #require(fixture.renders.known[address]?.state == .unrendered, "the saved edit is read")
+        try await Task.sleep(for: EditRenders.developQuiet + .milliseconds(200))
+        #expect(fixture.renders.statistics.rendered == 0, "the photo open in Develop waits until it's left")
+
+        model.select(fixture.photo("IMG_2.JPG"))
+        try await fixture.eventually { fixture.renders.statistics.rendered == 1 }
+        #expect(fixture.renders.statistics.rendered == 1)
+    }
+
     @Test func `leaving Develop saves the waiting change at once, and its render follows`() async throws {
         let fixture = EditRenderFixture()
         defer { fixture.cleanUp() }
