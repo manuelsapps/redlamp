@@ -192,10 +192,15 @@ final class StubEngine: EditingEngine, @unchecked Sendable {
 
     /// Every still asked for, most recent last.
     var stills: [StillRequest] = []
+    /// Stills fail, as when the photo open changes while one waits.
+    var failsStills = false
 
     /// A grey still at the requested size, or the photo's.
     func renderStill(_ request: StillRequest) async throws -> CGImage {
         stills.append(request)
+        if failsStills {
+            throw EngineError.imageChanged
+        }
         let size = request.maxLongEdge.map { PixelSize(width: 600, height: 400).fitted(within: PixelSize(
             width: $0,
             height: $0,

@@ -786,6 +786,110 @@ extension EditRendersTests {
         #expect(fixture.engine.rendered.withLock { $0.count } == 4, "none rendered again")
     }
 
+    @Test func `a photo edited in Develop renders once Library is shown, with no other change to start it`(
+    ) async throws {
+        let fixture = EditRenderFixture()
+        defer { fixture.cleanUp() }
+        try fixture.photos(["IMG_1.JPG"])
+        try await fixture.open(module: .develop)
+        let model = try #require(fixture.model)
+        try await fixture.eventually { model.info?.url == fixture.photo("IMG_1.JPG") }
+        try #require(model.info?.url == fixture.photo("IMG_1.JPG"))
+        let address = try #require(fixture.item("IMG_1.JPG")).address
+
+        model.setValue(.exposure, 1)
+        model.saveNow()
+        try await fixture.eventually { fixture.renders.known[address]?.state == .unrendered }
+        try #require(fixture.renders.known[address]?.state == .unrendered, "the saved edit is read")
+        try await Task.sleep(for: EditRenders.developQuiet + .milliseconds(200))
+        #expect(fixture.renders.statistics.rendered == 0, "the photo open in Develop waits until it's left")
+
+        model.showModule(.library)
+        try await fixture.eventually { fixture.renders.statistics.rendered == 1 }
+        #expect(fixture.renders.statistics.rendered == 1)
+        #expect(fixture.editor.stills.last?.maxLongEdge == PhotoStore.Tier.preview.pixelSize)
+        #expect(fixture.engine.opened.withLock { $0.isEmpty }, "Develop's engine has it decoded already")
+    }
+
+    @Test func `going to Develop stops the render of the photo it shows`() async throws {
+        let fixture = EditRenderFixture()
+        defer { fixture.cleanUp() }
+        try fixture.photos(["IMG_1.JPG"])
+        try fixture.edit("IMG_1.JPG", exposure: 1)
+        fixture.engine.gate.hold()
+        try await fixture.open()
+        try await fixture.eventually { fixture.engine.gate.arrived == 1 }
+        try #require(fixture.engine.gate.arrived == 1, "the render is under way")
+        let model = try #require(fixture.model)
+
+        model.click(fixture.photo("IMG_1.JPG"))
+        model.showModule(.develop)
+        fixture.engine.gate.release()
+        try await fixture.eventually { fixture.engine.cancelled.withLock { $0 } == 1 }
+        #expect(fixture.engine.cancelled.withLock { $0 } == 1)
+        #expect(fixture.renders.statistics.rendered == 0)
+    }
+
+    @Test func `when Develop's engine can't render the photo, the renders' own engine does`() async throws {
+        let fixture = EditRenderFixture()
+        defer { fixture.cleanUp() }
+        try fixture.photos(["IMG_1.JPG"])
+        try await fixture.open(module: .develop)
+        let model = try #require(fixture.model)
+        try await fixture.eventually { model.info?.url == fixture.photo("IMG_1.JPG") }
+        try #require(model.info?.url == fixture.photo("IMG_1.JPG"))
+        fixture.editor.failsStills = true
+
+        model.setValue(.exposure, 1)
+        model.showModule(.library)
+        try await fixture.eventually { fixture.renders.statistics.rendered == 1 }
+        #expect(fixture.renders.statistics.rendered == 1 && fixture.renders.statistics.failed == 0)
+        #expect(fixture.engine.opened.withLock { $0 } == [fixture.photo("IMG_1.JPG")])
+    }
+
+    @Test func `a photo edited in Develop renders once another photo is opened there`() async throws {
+        let fixture = EditRenderFixture()
+        defer { fixture.cleanUp() }
+        try fixture.photos(["IMG_1.JPG", "IMG_2.JPG"])
+        try await fixture.open(module: .develop)
+        let model = try #require(fixture.model)
+        try await fixture.eventually { model.info?.url == fixture.photo("IMG_1.JPG") }
+        try #require(model.info?.url == fixture.photo("IMG_1.JPG"))
+        let address = try #require(fixture.item("IMG_1.JPG")).address
+
+        model.setValue(.exposure, 1)
+        model.saveNow()
+        try await fixture.eventually { fixture.renders.known[address]?.state == .unrendered }
+        try #require(fixture.renders.known[address]?.state == .unrendered, "the saved edit is read")
+        try await Task.sleep(for: EditRenders.developQuiet + .milliseconds(200))
+        #expect(fixture.renders.statistics.rendered == 0, "the photo open in Develop waits until it's left")
+
+        model.select(fixture.photo("IMG_2.JPG"))
+        try await fixture.eventually { fixture.renders.statistics.rendered == 1 }
+        #expect(fixture.renders.statistics.rendered == 1)
+        #expect(
+            fixture.engine.opened.withLock { $0 } == [fixture.photo("IMG_1.JPG")],
+            "Develop's engine has moved on, so the renders' own opens it",
+        )
+    }
+
+    @Test func `leaving Develop saves the waiting change at once, and its render follows`() async throws {
+        let fixture = EditRenderFixture()
+        defer { fixture.cleanUp() }
+        try fixture.photos(["IMG_1.JPG"])
+        try await fixture.open(module: .develop)
+        let model = try #require(fixture.model)
+        try await fixture.eventually { model.info?.url == fixture.photo("IMG_1.JPG") }
+        try #require(model.info?.url == fixture.photo("IMG_1.JPG"))
+
+        model.setValue(.exposure, 1)
+        #expect(model.hasUnsavedChange)
+        model.showModule(.library)
+        #expect(!model.hasUnsavedChange)
+        try await fixture.eventually { fixture.renders.statistics.rendered == 1 }
+        #expect(fixture.renders.statistics.rendered == 1)
+    }
+
     @Test func `a photo's first edit made off screen is rendered in the background, as other edits are`() async throws {
         let fixture = EditRenderFixture()
         defer { fixture.cleanUp() }
