@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import RedlampCanvas
 import Testing
@@ -33,5 +34,27 @@ struct CropStageTests {
 
     @Test func `presenting still gives the photo the whole window`() {
         #expect(Self.stageInsets(cropping: true, presenting: true) == .zero)
+    }
+
+    @MainActor
+    @Test func `the editor shrinks the stage on entering the crop tool and restores it on leaving`() async throws {
+        _ = NSApplication.shared
+        let model = EditorModel(engine: StubEngine())
+        let controller = EditorWindowController(
+            model: model, theme: ThemeSettings(), onOpen: {}, onExport: {}, onExportWithPrevious: {},
+        )
+        let window = try #require(controller.window)
+        window.orderFront(nil)
+        defer { window.orderOut(nil) }
+        try await Task.sleep(for: .milliseconds(300))
+        let editing = model.canvas.stageInsets
+
+        model.activeTool = .crop
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(model.canvas.stageInsets.top == editing.top + PanelMetrics.cropClearance)
+
+        model.activeTool = .edit
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(model.canvas.stageInsets == editing)
     }
 }
