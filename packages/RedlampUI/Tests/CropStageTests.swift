@@ -6,9 +6,6 @@ import Testing
 /// Cropping fits the photo a little smaller, so its corner handles can't reach the toolbar, where
 /// a drag moves the window, or the window's edges, where it resizes it.
 struct CropStageTests {
-    /// How far past the photo's corner a corner handle takes clicks: half of its 10 points, and 8 more.
-    private static let handleReach: CGFloat = 13
-
     private static func stageInsets(cropping: Bool, panels: Bool = false, presenting: Bool = false) -> StageInsets {
         PanelMetrics.stageInsets(
             toolbarHeight: 52, presenting: presenting, leftPanel: panels, rightPanel: panels, filmstrip: nil,
@@ -18,10 +15,10 @@ struct CropStageTests {
 
     @Test func `the crop handles' click areas stop short of the toolbar and the window's edges`() {
         let insets = Self.stageInsets(cropping: true)
-        #expect(insets.top - Self.handleReach > 52)
-        #expect(insets.leading > Self.handleReach)
-        #expect(insets.trailing > Self.handleReach)
-        #expect(insets.bottom > Self.handleReach)
+        #expect(insets.top - CropOverlayView.cornerClickReach > 52)
+        #expect(insets.leading > CropOverlayView.cornerClickReach)
+        #expect(insets.trailing > CropOverlayView.cornerClickReach)
+        #expect(insets.bottom > CropOverlayView.cornerClickReach)
     }
 
     @Test func `cropping keeps the panels' width, moving only the gaps to the toolbar and the edges`() {
