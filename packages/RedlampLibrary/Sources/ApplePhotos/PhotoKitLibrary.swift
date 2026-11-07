@@ -265,12 +265,9 @@ public final class PhotoKitLibrary: ApplePhotosLibrary {
             case .five: 5
             default: 0
             }
-            if let metadata = asset.extendedMetadata {
-                found.caption = metadata.caption
-                found.keywords = Array(metadata.keywords)
-            } else {
-                found.keywords = []
-            }
+            let metadata = asset.extendedMetadata
+            found.caption = metadata.caption
+            found.keywords = Array(metadata.keywords)
         #endif
     }
 
