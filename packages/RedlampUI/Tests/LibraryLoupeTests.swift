@@ -172,6 +172,10 @@ struct LibraryLoupeTests {
         model.perform(.firstPhoto)
         try loupe.scrollWheel(with: notch(away: true))
         #expect(name() == names[0], "the wheel stops at the first photo, as ← does")
+
+        #expect(!model.canvasTakesCoveredEvents, "the Library's scrolls aren't Develop's canvas's")
+        model.showModule(.develop)
+        #expect(model.canvasTakesCoveredEvents, "Develop's canvas takes them again")
     }
 
     @Test func `a mouse wheel's notch is one photo, however fast it spins, rolled away the one before`() {
