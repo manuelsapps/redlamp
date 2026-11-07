@@ -28,7 +28,8 @@ import RedlampLibrary
 ///   keeps it open behind Library, where it's decoded already. `statistics` counts the waits, and Develop's frames
 /// asked for
 ///   while a step ran.
-/// - Bounded: one render at a time, cancelled when its photo leaves the source or its edit changes. The
+/// - Bounded: one render at a time, cancelled when its photo leaves the source, its edit changes or Develop shows
+///   it. The
 ///   engine is let go once the photos it opened would hold more than `engineBudget` on the GPU, and after
 ///   `engineIdle` with nothing to render.
 /// - Versions (LIB-48): a photo is known by its address, a file's own edit or one of its versions, whose edit is the
@@ -320,6 +321,13 @@ public final class EditRenders {
         guard onScreen[place] != rows else { return }
         onScreen[place] = rows
         schedulePump(after: Self.onScreenDelay)
+    }
+
+    /// Develop is shown: a render of the photo it shows stops, so its frames don't wait behind it in Develop's engine.
+    func developShown() {
+        if let current, isOpenInDevelop(current.photo) {
+            current.task.cancel()
+        }
     }
 
     /// Develop asked for a frame.

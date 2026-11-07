@@ -13,6 +13,7 @@ public extension EditorModel {
         module = next
         if next == .develop {
             openActivePhoto()
+            editRenders.developShown()
         }
         if leavingDevelop {
             finishLeavingDevelop()
