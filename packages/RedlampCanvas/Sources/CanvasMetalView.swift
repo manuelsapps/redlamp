@@ -31,7 +31,7 @@ public final class CanvasMetalView: NSView {
     }
 
     /// Scrolling and pinching over views drawn on the canvas reach it too (CoveredEvents).
-    var forwardsCoveredEvents = false {
+    public internal(set) var forwardsCoveredEvents = false {
         didSet { updateCoveredEventMonitor() }
     }
 

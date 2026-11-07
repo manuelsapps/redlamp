@@ -1,6 +1,7 @@
 #if DEBUG || REDLAMP_PROFILING
     import AppKit
     import Carbon.HIToolbox
+    import RedlampCanvas
     import RedlampEngineAPI
     @_spi(Harness) import RedlampUI
 
@@ -112,7 +113,7 @@
     }
 
     enum GridScenarios {
-        static let all: [Scenario] = [sizes, styles, selection, loupe, sourceViews]
+        static let all: [Scenario] = [sizes, styles, selection, loupe, loupeWheel, sourceViews]
 
         @MainActor private static func size(_ model: EditorModel) -> Double {
             model.libraryViews.thumbnailSize
@@ -283,6 +284,52 @@
             try app.press(KeyCombo(.escape))
             try app.wait("Esc: the grid") { $0.libraryView == .grid }
             try app.backToDevelop()
+        }
+
+        /// J10-2139: the wheel browses the loupe as Lightroom's does.
+        static let loupeWheel = Scenario(
+            "library.loupe-wheel",
+            "In the loupe at Fit the mouse wheel steps a photo a notch, towards you the next and away the one before; "
+                + "at 1:1 it doesn't browse",
+            claims: [.feature("library.loupe")],
+        ) { app in
+            _ = try app.showGrid()
+            try app.press(.loupeView)
+            try app.wait("the loupe at Fit") { $0.libraryView == .loupe && $0.libraryViews.loupeZoom == .fit }
+            // The driver hands the wheel to the view it's over, past the app's monitors: Develop's canvas, under the
+            // Library, mustn't be the one to take it in the app.
+            let canvasTakes = {
+                try app.main { _ in
+                    Views.editorWindow.flatMap { window in
+                        Views.all(CanvasMetalView.self, in: window.contentView?.superview ?? NSView()).first
+                    }?.forwardsCoveredEvents
+                }
+            }
+            try app.expect(try canvasTakes() == false, "Develop's canvas takes the loupe's scrolls")
+            let shown = { try app.main { $0.selection?.lastPathComponent } }
+            // The wheel goes the way ← and → do: towards you the next photo, away the one before.
+            let first = try shown()
+            try app.turnWheel(.identifier("library.loupe"), notches: -1)
+            try app.wait("a notch towards you to move on") { $0.selection?.lastPathComponent != first }
+            let second = try shown()
+            try app.press(.nextPhoto)
+            try app.wait("→ to move on") { $0.selection?.lastPathComponent != second }
+            try app.turnWheel(.identifier("library.loupe"), notches: 1)
+            try app.wait("a notch away: \(String(describing: second))") { $0.selection?.lastPathComponent == second }
+            try app.press(.previousPhoto)
+            try app.wait("←: \(String(describing: first))") { $0.selection?.lastPathComponent == first }
+            app.covered(.feature("library.loupe"), via: .mouse)
+            try app.press(.toggleZoom)
+            try app.wait("Z: 1:1") { $0.libraryViews.loupeZoom == .actual }
+            try app.turnWheel(.identifier("library.loupe"), notches: -1)
+            try app.settle()
+            try app.expect(try shown() == first, "The wheel browsed the loupe at 1:1")
+            try app.press(.toggleZoom)
+            try app.wait("Z: Fit") { $0.libraryViews.loupeZoom == .fit }
+            try app.press(KeyCombo(.escape))
+            try app.wait("Esc: the grid") { $0.libraryView == .grid }
+            try app.backToDevelop()
+            try app.wait("Develop's canvas taking scrolls over its tools again") { _ in (try? canvasTakes()) == true }
         }
 
         static let sourceViews = Scenario(

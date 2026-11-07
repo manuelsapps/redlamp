@@ -20,6 +20,12 @@ public extension EditorModel {
         }
     }
 
+    /// Whether Develop's canvas takes the scrolls and pinches over what's drawn on it (`CoveredEvents`): not while the
+    /// command palette is open, nor while the Library, which lies over the canvas, is shown and takes its own (J10-2139).
+    var canvasTakesCoveredEvents: Bool {
+        commandPalette == nil && module == .develop
+    }
+
     /// The photo open in Develop wasn't rendered while it was shown, and nothing else starts its render now.
     private func finishLeavingDevelop() {
         endNudgeRun()

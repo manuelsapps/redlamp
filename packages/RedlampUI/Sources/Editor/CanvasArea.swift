@@ -33,7 +33,7 @@ import UniformTypeIdentifiers
                         ? CanvasMetalView.assessmentSurround
                         : PhotoSurround.level(lightsOut: model.lightsOut),
                     whiteFrame: model.colorAssessment ? CanvasMetalView.assessmentFrame : 0,
-                    forwardsCoveredEvents: model.commandPalette == nil,
+                    forwardsCoveredEvents: model.canvasTakesCoveredEvents,
                     onSample: { model.sampleEyedropper(at: $0) },
                     onHover: { model.hoverReadout(at: $0) },
                     onCommandScroll: { model.scrollSizedBrush(by: $0, feather: $1) },

@@ -1,5 +1,6 @@
 import AppKit
 import QuartzCore
+import RedlampCanvas
 import RedlampDesign
 import RedlampDocument
 import RedlampLibrary
@@ -8,7 +9,8 @@ import RedlampLibrary
 /// once that's decoded, with its name, date and camera settings above it as an expanded grid cell has
 /// them, and its rating, flag, label and mark beside them as they change (LIB-15). Z, Space or a click
 /// zoom it to 1:1, where the preview shows at the photo's full size until the photo itself is decoded off
-/// the main thread, and a drag pans it; Z or a click fit it again. An edited photo shows its edit once the
+/// the main thread, and a drag pans it; Z or a click fit it again. At Fit the scroll wheel steps to the photo before or
+/// after, as ← and → do (`LoupeWheel`). An edited photo shows its edit once the
 /// library has rendered it, and until then its embedded preview, marked in its corner as a grid cell is
 /// (LIB-17). It reads nothing while it isn't shown. LIB-16 adds Compare and Survey. The judging tools (LIB-38)
 /// draw over the photo, their buttons in the caption row; with the following loupe on, the photo itself is decoded
@@ -47,6 +49,7 @@ final class LibraryLoupeView: NSView, ThemeFollowing {
     /// At 1:1, the point of the photo at the view's middle, 0 ... 1 across and down.
     private(set) var focus = CGPoint(x: 0.5, y: 0.5)
     private var drag: (start: CGPoint, focus: CGPoint, moved: Bool)?
+    private var wheel = LoupeWheel()
     private var loading: Task<Void, Never>?
 
     init(model: EditorModel) {
@@ -497,6 +500,23 @@ final class LibraryLoupeView: NSView, ThemeFollowing {
         layoutPhoto()
     }
 
+    /// At Fit, the wheel or a swipe steps to the photo before or after, as ← and → do; ⌘-scrolling and scrolling at 1:1
+    /// are left alone.
+    override func scrollWheel(with event: NSEvent) {
+        guard zoom == .fit, !event.modifierFlags.contains(.command), model.selection != nil else {
+            return super.scrollWheel(with: event)
+        }
+        let step = wheel.step(
+            notches: CanvasMetalView.notches(of: event), precise: event.hasPreciseScrollingDeltas, phase: event.phase,
+            momentumPhase: event.momentumPhase,
+        )
+        guard step != 0 else { return }
+        let action: ShortcutAction = step < 0 ? .previousPhoto : .nextPhoto
+        if model.canPerform(action) {
+            _ = model.perform(action)
+        }
+    }
+
     /// A click without a drag zooms to 1:1 where it landed, or fits the photo again.
     override func mouseUp(with event: NSEvent) {
         defer { drag = nil }
@@ -513,6 +533,35 @@ final class LibraryLoupeView: NSView, ThemeFollowing {
         }
         model.toggleLoupeZoom()
         zoomChanged()
+    }
+}
+
+/// How the scroll wheel browses the loupe (J10-2139), in the photos to step by: a mouse wheel's notch is one photo,
+/// rolled away from you the one before, as in Lightroom, however fast it spins. A trackpad's swipe is one photo once it
+/// has gone `swipe` notches, however far it goes and its momentum carries it; a smooth mouse's scrolling, which has no
+/// gesture, a photo for each notch it goes.
+struct LoupeWheel {
+    static let swipe = 2.0
+
+    private var travelled = 0.0
+    private var stepped = false
+
+    /// -1 for the photo before, 1 for the one after, 0 for none, for a scroll of `notches`
+    /// (`CanvasMetalView.notches(of:)`).
+    mutating func step(
+        notches: Double, precise: Bool, phase: NSEvent.Phase = [], momentumPhase: NSEvent.Phase = [],
+    ) -> Int {
+        guard precise else { return notches > 0 ? -1 : notches < 0 ? 1 : 0 }
+        let gesture = !phase.isEmpty || !momentumPhase.isEmpty
+        if phase.contains(.began) || !gesture && stepped || travelled * notches < 0 {
+            travelled = 0
+            stepped = false
+        }
+        guard momentumPhase.isEmpty, !stepped else { return 0 }
+        travelled += notches
+        guard abs(travelled) >= (gesture ? Self.swipe : 1) else { return 0 }
+        stepped = true
+        return travelled > 0 ? -1 : 1
     }
 }
 
