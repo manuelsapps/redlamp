@@ -2,6 +2,7 @@ import AppKit
 import CoreGraphics
 import Foundation
 import ImageIO
+import RedlampCanvas
 import Testing
 import UniformTypeIdentifiers
 @testable import RedlampUI
@@ -121,6 +122,85 @@ struct LibraryLoupeTests {
         #expect(!model.canPerform(.toggleZoom) && !model.perform(.toggleZoom), "Space and Z go on to the grid")
         model.showModule(.develop)
         #expect(model.perform(.toggleZoom) && model.libraryViews.loupeZoom == .actual, "Develop's Z zooms its canvas")
+    }
+
+    /// A notch of a mouse wheel over `loupe`, rolled away from you or towards you as the canvas reads it.
+    private func notch(away: Bool) throws -> NSEvent {
+        for lines: Int32 in [1, -1] {
+            let cgEvent = try #require(CGEvent(
+                scrollWheelEvent2Source: nil, units: .line, wheelCount: 1, wheel1: lines, wheel2: 0, wheel3: 0,
+            ))
+            if let event = NSEvent(cgEvent: cgEvent), (CanvasMetalView.notches(of: event) > 0) == away {
+                return event
+            }
+        }
+        throw CancellationError()
+    }
+
+    @Test func `the wheel steps through the photos at Fit, one a notch, and leaves 1:1 and ⌘-scrolling alone`(
+    ) async throws {
+        let fixture = ModuleFixture()
+        defer { fixture.cleanUp() }
+        fixture.engine.decodedThumbnail = { _, size in Self.photo(size) }
+        try await fixture.open(count: 5)
+        let modules = fixture.showModules()
+        let model = fixture.model
+        let loupe = modules.content.library.loupe
+        model.showLibrary(.loupe)
+        try await fixture.settle()
+        let name = { model.selection?.lastPathComponent }
+        let names = fixture.photos.map(\.lastPathComponent)
+
+        try loupe.scrollWheel(with: notch(away: false))
+        try loupe.scrollWheel(with: notch(away: false))
+        #expect(name() == names[2], "two notches towards you: two photos on")
+        try loupe.scrollWheel(with: notch(away: true))
+        #expect(name() == names[1], "a notch away: the photo before")
+
+        let command = try #require(CGEvent(
+            scrollWheelEvent2Source: nil, units: .line, wheelCount: 1, wheel1: -1, wheel2: 0, wheel3: 0,
+        ))
+        command.flags = .maskCommand
+        try loupe.scrollWheel(with: #require(NSEvent(cgEvent: command)))
+        #expect(name() == names[1], "⌘-scrolling doesn't browse")
+
+        #expect(model.perform(.toggleZoom) && model.libraryViews.loupeZoom == .actual)
+        try loupe.scrollWheel(with: notch(away: false))
+        #expect(name() == names[1], "at 1:1 the wheel doesn't browse")
+        #expect(model.perform(.toggleZoom) && model.libraryViews.loupeZoom == .fit)
+
+        model.perform(.firstPhoto)
+        try loupe.scrollWheel(with: notch(away: true))
+        #expect(name() == names[0], "the wheel stops at the first photo, as ← does")
+    }
+
+    @Test func `a mouse wheel's notch is one photo, however fast it spins, rolled away the one before`() {
+        var wheel = LoupeWheel()
+        #expect(wheel.step(notches: 1, precise: false) == -1)
+        #expect(wheel.step(notches: -4, precise: false) == 1)
+        #expect(wheel.step(notches: 0, precise: false) == 0)
+    }
+
+    @Test func `a trackpad swipe is one photo once it has gone far enough, its momentum none`() {
+        var wheel = LoupeWheel()
+        #expect(wheel.step(notches: -0.5, precise: true, phase: .began) == 0, "a light touch")
+        #expect(wheel.step(notches: -1, precise: true, phase: .changed) == 0)
+        #expect(wheel.step(notches: -1, precise: true, phase: .changed) == 1, "past the threshold: the next photo")
+        #expect(wheel.step(notches: -5, precise: true, phase: .changed) == 0, "however far the swipe goes")
+        #expect(wheel.step(notches: 0, precise: true, phase: .ended) == 0)
+        #expect(wheel.step(notches: -5, precise: true, momentumPhase: .changed) == 0, "nor its momentum")
+        #expect(wheel.step(notches: 1.5, precise: true, phase: .began) == 0, "a new swipe starts again")
+        #expect(wheel.step(notches: 1, precise: true, phase: .changed) == -1, "swiped up: the photo before")
+    }
+
+    @Test func `a smooth mouse's scrolling, with no gesture, is a photo a notch`() {
+        var wheel = LoupeWheel()
+        #expect(wheel.step(notches: -0.6, precise: true) == 0)
+        #expect(wheel.step(notches: -0.6, precise: true) == 1)
+        #expect(wheel.step(notches: -0.6, precise: true) == 0)
+        #expect(wheel.step(notches: -0.6, precise: true) == 1)
+        #expect(wheel.step(notches: 0.6, precise: true) == 0, "turning back starts again")
+        #expect(wheel.step(notches: 0.6, precise: true) == -1)
     }
 
     @Test func `a photo read from its header has its size upright, turned by its EXIF orientation`() throws {
