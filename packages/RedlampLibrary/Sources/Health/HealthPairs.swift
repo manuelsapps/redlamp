@@ -159,12 +159,13 @@ struct HealthPairs: Sendable {
             return
         }
         self.found[rule] = nil
-        var places = judged.compactMap { group -> (
-            place: Int,
-            group: (key: Key, findings: [HealthFinding], kept: Int)
-        )? in
+        var places: [(place: Int, group: (key: Key, findings: [HealthFinding], kept: Int))] = []
+        places.reserveCapacity(judged.count)
+        for group in judged {
             let place = Self.place(of: group.key, in: groups)
-            return place < groups.count && groups[place] == group.key ? (place, group) : nil
+            if place < groups.count, groups[place] == group.key {
+                places.append((place: place, group: group))
+            }
         }
         places.sort { $0.place > $1.place }
         var starts = [Int](repeating: 0, count: found.counts.count + 1)
