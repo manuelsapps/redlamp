@@ -602,9 +602,13 @@ extension ImportWindowModel {
                 return "\(entry.title) was being rolled back when it was interrupted, with "
                     + "\(Self.count(entry.rolledBack, "photo")) taken back. Resume finishes rolling it back."
             }
-            return "\(entry.title) was interrupted with \(entry.done) of \(entry.photos) photos copied. "
-                + "Resume copies the rest from their cards or folders, which have to be there; Roll Back moves "
+            let next = "Resume copies the rest from their cards or folders, which have to be there; Roll Back moves "
                 + "those copied to the Trash."
+            // One this window ran says why it stopped.
+            if let failure, entry.id == plan?.id {
+                return failure + " " + next
+            }
+            return "\(entry.title) was interrupted with \(entry.done) of \(entry.photos) photos copied. " + next
         }
         switch phase {
         case .choosing:
