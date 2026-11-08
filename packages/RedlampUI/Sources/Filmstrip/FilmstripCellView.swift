@@ -344,8 +344,7 @@ final class FilmstripBadgesView: LayerDrawnView {
             context.draw(mark, in: CGRect(x: rect.width - 17, y: 1, width: 16, height: 16))
         }
         // The grid's, on its disc, which reads on a light photo as well as a dark one.
-        if let flag = badges.metadata.flag,
-           let image = GridBadges.image(flag == .pick ? .pick : .reject, scale: scale) {
+        if let flag = badges.metadata.flag, let image = GridBadges.image(GridBadges.Kind(flag), scale: scale) {
             drawUpright(image, in: CGRect(x: 1, y: 1, width: 16, height: 16), context)
         }
         // A focus stack suggested takes a stack document's place, as in the grid.
