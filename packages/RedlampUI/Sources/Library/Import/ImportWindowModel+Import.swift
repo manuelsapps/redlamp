@@ -111,17 +111,17 @@ extension ImportWindowModel {
     /// fills. The journal keeps one stopped partway unfinished, so it's offered for Resume and Roll Back at once,
     /// and the photos it placed are shown as copied.
     private func stopped(_ plan: ImportPlan?, by error: any Error, resuming: Bool = false) async {
-        interrupted = await (try? importer.unfinishedEntries()) ?? []
-        phase = .finished
-        if let plan {
-            self.plan = plan
-        }
-        for index in sources.indices {
-            sources[index].progress = nil
-        }
+        // Read before anything changes, so the window never says it's over without what it copied.
+        let entries = await (try? importer.unfinishedEntries()) ?? []
         var placed: [(String, URL)] = []
         if let plan {
             placed = await Self.placed(plan, failed: [], on: destinationFileSystem)
+            self.plan = plan
+        }
+        interrupted = entries
+        phase = .finished
+        for index in sources.indices {
+            sources[index].progress = nil
         }
         copied.formUnion(placed.map(\.0))
         let unfinished = plan.flatMap { plan in interrupted.first { $0.id == plan.id } }
@@ -200,6 +200,10 @@ extension ImportWindowModel {
     }
 
     private func finished(_ outcome: ImportOutcome, plan: ImportPlan) async {
+        // Read before anything changes, so the window never says it's over without what it copied.
+        let placed = await Self.placed(
+            plan, failed: Set(outcome.failures.map(\.photo)), on: destinationFileSystem,
+        )
         self.outcome = outcome
         phase = .finished
         preferences.update { $0.counters = plan.counters }
@@ -207,9 +211,6 @@ extension ImportWindowModel {
             sources[index].progress = nil
             sources[index].outcome = outcome.sources.first { $0.id == sources[index].id }
         }
-        let placed = await Self.placed(
-            plan, failed: Set(outcome.failures.map(\.photo)), on: destinationFileSystem,
-        )
         copied.formUnion(placed.map(\.0))
         failure = outcome.state == .stopped
             ? "The import was cancelled: the photos copied so far are in place, the others are still where they were; "
