@@ -161,8 +161,8 @@ public extension EditorModel {
         [selectionAnchor, activeAddress].lazy.compactMap { $0.flatMap(self.library.photoID(of:)) }.first
     }
 
-    /// ⌘A: every photo in the filmstrip, the active one staying active. With no photo active among them, the first
-    /// becomes the active one (J10-2172).
+    /// ⌘A: every photo in the filmstrip, the active one staying active. With no photo active, as after the last one
+    /// shown went to the Trash, the first becomes the active one (J10-2172).
     func selectAllPhotos() {
         photoSelection.selectAll(in: library.photoList)
         guard activeID == nil, let first = photoSelection.active.flatMap(library.address(ofPhoto:)) else { return }
