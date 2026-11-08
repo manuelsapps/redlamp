@@ -395,7 +395,8 @@ final class LibraryLoupeView: NSView, ThemeFollowing {
             // A photo kept in Apple Photos downloads its original first (LIB-60), its preview shown meanwhile and the
             // download counted in the filmstrip; one that couldn't be had is asked for again at the next zoom.
             if let originals, await (try? originals.local(url, priority: .open)) == nil {
-                if self?.shown == photo {
+                // One cancelled for another of the same photo leaves that one be.
+                if !Task.isCancelled, self?.shown == photo {
                     self?.loading = nil
                 }
                 return
