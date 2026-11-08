@@ -12,6 +12,9 @@ import RedlampDocument
 /// together, so a batch moving thousands of photos changes counts in place. Only the roots changing
 /// what they show reloads the list.
 ///
+/// Roots are listed in the order they were added and subfolders in Finder's order; with Sort Folders Newest First,
+/// both by name, last first, so folders named by date show the newest at the top. Changing it reloads the list.
+///
 /// Recently Trashed follows the folders while the library is open (LIB-26), with its count, and shown
 /// empty, a line under it saying what it holds. Photos dragged from the grid onto a folder move there
 /// (`EditorModel+Drops`).
@@ -64,8 +67,9 @@ final class FolderOutlineView: SidebarOutlineView {
             guard let self else { return }
             let roots = library.roots
             let missing = library.missing
-            // Which folders can be opened depends on Show Photos in Subfolders.
+            // Which folders can be opened depends on Show Photos in Subfolders; their order on Newest First.
             _ = library.includesSubfolders
+            _ = library.sortsNewestFirst
             showRoots(roots, missing: missing)
         }
         openTracker = Tracker { [weak self] in
@@ -131,13 +135,28 @@ final class FolderOutlineView: SidebarOutlineView {
     private func showRoots(_ roots: [WorkingFolder], missing: Set<UUID>) {
         let shown = ShownRoots(
             ids: roots.map(\.id), paths: roots.map(\.path), missing: missing,
-            includesSubfolders: library.includesSubfolders,
+            includesSubfolders: library.includesSubfolders, newestFirst: library.sortsNewestFirst,
         )
         guard shown != shownRoots else { return }
         shownRoots = shown
         rootsShown += 1
-        rootNodes = roots.map { node(for: $0.url, root: $0, missing: missing.contains($0.id)) }
+        rootNodes = ordered(roots).map { node(for: $0.url, root: $0, missing: missing.contains($0.id)) }
         reloadTop()
+    }
+
+    /// The roots in the order they were added, or with Newest First by name, last first (by path where two share one).
+    private func ordered(_ roots: [WorkingFolder]) -> [WorkingFolder] {
+        guard library.sortsNewestFirst else { return roots }
+        return roots.sorted { a, b in
+            let names = FileOrder.compare(a.name, b.name)
+            return names == .orderedSame ? FileOrder.precedes(b.path, a.path) : names == .orderedDescending
+        }
+    }
+
+    /// The subfolder at `index` among `subfolders`, which are in Finder's order: with Newest First, counted from the
+    /// end, so that a folder with thousands isn't sorted again for each row.
+    private func subfolder(_ index: Int, of subfolders: [URL]) -> URL {
+        subfolders[library.sortsNewestFirst ? subfolders.count - 1 - index : index]
     }
 
     /// `item`'s row as `updated` has it, shown by its cell, if it has one, without making it again.
@@ -154,6 +173,7 @@ final class FolderOutlineView: SidebarOutlineView {
         var paths: [String]
         var missing: Set<UUID>
         var includesSubfolders: Bool
+        var newestFirst: Bool
     }
 
     /// How many times the roots were listed again, for the tests.
@@ -292,7 +312,7 @@ final class FolderOutlineView: SidebarOutlineView {
         guard let item = item as? SidebarNode else { return topNodes[index] }
         guard case let .folder(row) = item.kind, let subfolders = library.node(for: row.url)?.subfolders,
               subfolders.indices.contains(index) else { return placeholder }
-        return node(for: subfolders[index], root: row.root)
+        return node(for: subfolder(index, of: subfolders), root: row.root)
     }
 
     override func outlineView(_: NSOutlineView, isItemExpandable item: Any) -> Bool {

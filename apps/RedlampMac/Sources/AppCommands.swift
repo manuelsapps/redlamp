@@ -373,6 +373,7 @@ struct AppCommands: Commands {
         toggle(.labReadout)
         commandItem(.toggleRightPanel)
         toggle(.showPhotosInSubfolders)
+        toggle(.sortFoldersNewestFirst)
         item(.showRecentlyTrashed)
         // The Library panel's entries (LIB-23).
         ForEach([ShortcutAction.showAllPhotographs, .showPreviousImport, .showMarked, .showRejected]) { item($0) }

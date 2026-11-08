@@ -125,6 +125,7 @@ public enum ShortcutAction: String, CaseIterable, Sendable, Identifiable {
     /// Library
     case swapCompared, makeSelect
     case cycleGridStyle, largerThumbnails, smallerThumbnails, showInFinder, showPhotosInSubfolders
+    case sortFoldersNewestFirst
     case moveToTrash, showRecentlyTrashed, putBack, putBackBatch
     case showAllPhotographs, showPreviousImport, showMarked, showRejected
     case newCollection, newSmartCollection, newCollectionSet, addToCollection, addToTargetCollection
@@ -194,7 +195,7 @@ public enum ShortcutAction: String, CaseIterable, Sendable, Identifiable {
             .modules
         case .swapCompared, .makeSelect,
              .cycleGridStyle, .largerThumbnails, .smallerThumbnails, .showInFinder, .showPhotosInSubfolders,
-             .moveToTrash, .showRecentlyTrashed, .putBack, .putBackBatch,
+             .sortFoldersNewestFirst, .moveToTrash, .showRecentlyTrashed, .putBack, .putBackBatch,
              .showAllPhotographs, .showPreviousImport, .showMarked, .showRejected,
              .newCollection, .newSmartCollection, .newCollectionSet, .addToCollection, .addToTargetCollection,
              .removeFromCollection,
@@ -264,6 +265,7 @@ public enum ShortcutAction: String, CaseIterable, Sendable, Identifiable {
         case .smallerThumbnails: "Decrease Thumbnail Size"
         case .showInFinder: "Show in Finder"
         case .showPhotosInSubfolders: "Show Photos in Subfolders"
+        case .sortFoldersNewestFirst: "Sort Folders Newest First"
         case .moveToTrash: "Move to Trash"
         case .showRecentlyTrashed: "Show Recently Trashed"
         case .putBack: "Put Back"
@@ -470,9 +472,9 @@ public enum ShortcutAction: String, CaseIterable, Sendable, Identifiable {
         // In Library, where Develop's Before / After key shows the filter bar, as in Lightroom Classic.
         case .toggleFilterBar: [.char("\\")]
         case .toggleFilters: [.char("l", command: true)]
-        case .showPhotosInSubfolders, .showRecentlyTrashed, .putBackBatch, .lockFilters, .sortByFolder,
-             .sortByCaptureTime, .sortByName, .sortByRating, .sortByEditTime, .sortByModified, .sortByFileSize,
-             .reverseSort, .showAllPhotographs, .showPreviousImport, .showRejected: []
+        case .showPhotosInSubfolders, .sortFoldersNewestFirst, .showRecentlyTrashed, .putBackBatch, .lockFilters,
+             .sortByFolder, .sortByCaptureTime, .sortByName, .sortByRating, .sortByEditTime, .sortByModified,
+             .sortByFileSize, .reverseSort, .showAllPhotographs, .showPreviousImport, .showRejected: []
         // Lightroom Classic's Show Quick Collection.
         case .showMarked: [.char("b", command: true)]
         // Lightroom Classic's, in Library, where Develop's New Snapshot and Delete Mask don't reach.

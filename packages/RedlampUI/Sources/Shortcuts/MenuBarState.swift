@@ -167,6 +167,7 @@ import RedlampLibrary
         case .toggleFilters: return model.libraryFilters?.filter.isEnabled == true
         case .lockFilters: return model.libraryFilters?.isLocked == true
         case .showPhotosInSubfolders: return model.library.includesSubfolders
+        case .sortFoldersNewestFirst: return model.library.sortsNewestFirst
         case .labReadout: return model.showsLabReadout
         case .toggleAutoSync: return model.settingsSync.isAutoSyncing
         case .autoAdvance: return model.autoAdvance

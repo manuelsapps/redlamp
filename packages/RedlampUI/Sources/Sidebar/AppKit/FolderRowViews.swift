@@ -92,8 +92,9 @@ extension SidebarCellView {
         "\(count.formatted()) photo\(count == 1 ? "" : "s")"
     }
 
-    /// Show in Finder, Show Summary… (beside `anchor`, its row), Show Photos in Subfolders, and for a root, Move Edits
-    /// and Metadata… with the library open, Remove from Folders, and Locate… when it's missing.
+    /// Show in Finder, Show Summary… (beside `anchor`, its row), Show Photos in Subfolders, Sort Folders Newest First,
+    /// and for a root, Move Edits and Metadata… with the library open, Remove from Folders, and Locate… when it's
+    /// missing.
     static func folderMenu(_ row: FolderRow, model: EditorModel, anchor: NSView) -> NSMenu {
         let menu = NSMenu()
         if !row.isMissing {
@@ -105,7 +106,7 @@ extension SidebarCellView {
         return menu
     }
 
-    /// Show in Finder, Show Summary… with the library open, and Show Photos in Subfolders.
+    /// Show in Finder, Show Summary… with the library open, Show Photos in Subfolders and Sort Folders Newest First.
     private static func addFolderItems(_ row: FolderRow, model: EditorModel, anchor: NSView, to menu: NSMenu) {
         menu.addItem(NSMenuItem(title: "Show in Finder") {
             NSWorkspace.shared.activateFileViewerSelecting([row.url])
@@ -128,6 +129,16 @@ extension SidebarCellView {
         }
         subfolders.state = model.library.includesSubfolders ? .on : .off
         menu.addItem(subfolders)
+        menu.addItem(newestFirstItem(model: model))
+    }
+
+    /// Sort Folders Newest First, with its checkmark: in a folder's menu and the Folders header's.
+    static func newestFirstItem(model: EditorModel) -> NSMenuItem {
+        let item = NSMenuItem(title: ShortcutAction.sortFoldersNewestFirst.title) {
+            model.perform(.sortFoldersNewestFirst)
+        }
+        item.state = model.library.sortsNewestFirst ? .on : .off
+        return item
     }
 
     /// Locate… for a missing root, Move Edits and Metadata… with the library open, and Remove from Folders.

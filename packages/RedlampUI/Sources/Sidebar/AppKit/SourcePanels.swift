@@ -73,7 +73,7 @@ enum SourcePanels {
     }
 
     /// The Folders section, with a + in its header that adds a folder, or albums of Apple Photos to keep in place
-    /// before the Apple Photos section shows (LIB-62).
+    /// before the Apple Photos section shows (LIB-62); its header's menu has those and Sort Folders Newest First.
     static func folders(model: EditorModel) -> SourceListSectionView {
         let add = SourceListHeaderView.Add(
             help: "Add a Folder or Albums from Apple Photos", identifier: "sources.folders.add",
@@ -89,6 +89,8 @@ enum SourcePanels {
             let items = made.items
             made.removeAllItems()
             items.forEach(menu.addItem)
+            menu.addItem(.separator())
+            menu.addItem(SidebarCellView.newestFirstItem(model: model))
         }
     }
 
