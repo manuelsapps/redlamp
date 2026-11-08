@@ -198,6 +198,11 @@ import AppKit
         model.chosen.photos
     }
 
+    /// The photos selected in the grid.
+    var selectedCount: Int {
+        grid.collectionView.selectionIndexPaths.count
+    }
+
     /// Holds the imports, once every photo is copied, before they add the rest to the library, until it's called
     /// with false.
     func holdAddingToLibrary(_ holds: Bool) {

@@ -204,6 +204,8 @@
             try app.wait("the card browsed", timeout: 60) { _ in
                 ImportWindowController.current.map { $0.isBrowsed && $0.photoCount == card.count } == true
             }
+            // Places in the grid hold still once the photos are in their moments by every capture time read.
+            try app.run("the photos grouped again") { _ in await ImportWindowController.current?.regrouped() }
             // The first shoot: the first four photos, the others left for later with Space.
             let first = 4
             let later = Array(first ..< card.count)
@@ -222,8 +224,16 @@
             // The next shoot, chosen meanwhile.
             try app.inImportWindow { $0.select(later) }
             try app.pressInImportWindow(KeyCombo(.space))
-            try app.wait("the next shoot chosen while the first is added") { _ in
-                ImportWindowController.current.map { $0.isAdding && $0.chosenCount == later.count } == true
+            do {
+                try app.wait("the next shoot chosen while the first is added") { _ in
+                    ImportWindowController.current.map { $0.isAdding && $0.chosenCount == later.count } == true
+                }
+            } catch {
+                let seen = try? app.inImportWindow { window in
+                    "\(window.state); \(window.chosenCount) chosen, \(window.copiedCount) copied, "
+                        + "\(window.selectedCount) selected; the card: \(window.shownSourceDetail ?? "none")"
+                }
+                throw ScenarioFailure("The next shoot wasn't chosen while the first was added: \(seen ?? "no window")")
             }
             try app.inImportWindow { $0.holdAddingToLibrary(false) }
             try app.waitInImportWindow("the first shoot imported", timeout: 120) { _ in
