@@ -164,9 +164,59 @@ import AppKit
         model.phase == .finished
     }
 
-    /// What the import did: photos verified, and whether every source can be erased.
+    /// What the import did: photos verified, and whether every source can be erased, as their rows say.
     var result: (verified: Int, safeToErase: Bool)? {
-        model.outcome.map { ($0.verified, $0.isSafeToErase) }
+        model.outcome.map { outcome in
+            let sources = model.sources.filter { $0.outcome != nil }
+            return (outcome.verified, outcome.isSafeToErase && sources.allSatisfy(model.isSafeToErase))
+        }
+    }
+
+    /// What the row of the source shown says under its name.
+    var shownSourceDetail: String? {
+        model.shown.flatMap(model.source).map(model.detail(of:))
+    }
+
+    /// Fills the Mac's disk once `photos` photos of the next import are done, so it stops partway; the disk has
+    /// space again for the next.
+    func simulateFullDisk(afterPhotos photos: Int) {
+        model.importer.simulateFullDisk(afterPhotos: photos)
+    }
+
+    /// Resume is offered in Import's place.
+    var offersResume: Bool {
+        !resumeButton.isHidden && importButton.isHidden
+    }
+
+    /// The photos the window shows as copied.
+    var copiedCount: Int {
+        model.copied.count
+    }
+
+    /// The photos chosen for the next import.
+    var chosenCount: Int {
+        model.chosen.photos
+    }
+
+    /// Holds the imports, once every photo is copied, before they add the rest to the library, until it's called
+    /// with false.
+    func holdAddingToLibrary(_ holds: Bool) {
+        model.importer.holdAddingToLibrary(holds)
+    }
+
+    /// The import is adding the photos it copied to the library.
+    var isAdding: Bool {
+        model.phase == .adding
+    }
+
+    /// Cancel Import, or Stop Rolling Back, is offered.
+    var offersCancel: Bool {
+        !cancelButton.isHidden
+    }
+
+    /// What Import reads.
+    var importTitle: String {
+        importButton.title
     }
 
     var summary: String {
