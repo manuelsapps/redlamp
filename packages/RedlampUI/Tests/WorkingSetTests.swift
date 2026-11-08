@@ -112,6 +112,24 @@ struct WorkingSetTests {
         #expect(FolderLibrary(defaults: defaults).roots.map(\.id) == [year.id, gone.id, moved.id])
     }
 
+    @Test func `roots a volume brings back inside another are taken in`() async throws {
+        defer { cleanUp() }
+        let year = WorkingFolder(path: root.appending(path: "2026").standardizedFileURL.path)
+        let milanga = WorkingFolder(path: root.appending(path: "2026/Milanga").standardizedFileURL.path)
+        try defaults.set(JSONEncoder().encode([milanga, year]), forKey: "folders.roots")
+        let library = FolderLibrary(defaults: defaults)
+        var restored = false
+        library.restore { _, _ in restored = true }
+        try await eventually { restored }
+        #expect(library.missing == [milanga.id, year.id], "both away with their volume, neither taken in")
+
+        try photos(["2026/Milanga/a.ARW"])
+        library.volumesChanged()
+        try await eventually { library.roots.count == 1 }
+        #expect(library.roots.map(\.id) == [year.id] && library.missing.isEmpty)
+        #expect(FolderLibrary(defaults: defaults).roots.map(\.id) == [year.id])
+    }
+
     @Test func `the folder earlier versions remembered becomes the first root`() {
         defer { cleanUp() }
         defaults.set(root.path, forKey: "lastFolder")
