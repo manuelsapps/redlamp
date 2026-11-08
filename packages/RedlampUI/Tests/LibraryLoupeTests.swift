@@ -303,6 +303,40 @@ struct LibraryLoupeTests {
         #expect(fixture.engine.rendered.withLock { $0.count } == rendered, "without rendering it again")
     }
 
+    @Test func `the following loupe magnifies an edit rendered at full size at its own size, not the photo's`(
+    ) async throws {
+        let fixture = EditRenderFixture()
+        defer { fixture.cleanUp() }
+        try fixture.photos(["IMG_1.JPG"])
+        try fixture.edit("IMG_1.JPG", exposure: 1)
+        try await fixture.open()
+        let model = try #require(fixture.model)
+        model.showLibrary(.loupe)
+        let loupe = LibraryLoupeView(model: model)
+        loupe.frame = CGRect(x: 0, y: 0, width: 800, height: 600)
+        fixture.show(loupe)
+        let edit = try EditRenderFixture.digest(exposure: 1)
+        model.setFollowingLoupe(.double)
+        try await fixture.eventually { loupe.showsFullPhoto && loupe.shownEdit == edit }
+        // The render, 3000 by 2000 pixels, stands in for an edit's crop of the 96 by 64 pixel photo.
+        let image = try #require(loupe.image)
+        let frame = loupe.photoFrame
+        let event = try #require(NSEvent.mouseEvent(
+            with: .mouseMoved, location: loupe.convert(CGPoint(x: frame.midX, y: frame.midY), to: nil),
+            modifierFlags: [], timestamp: 0, windowNumber: loupe.window?.windowNumber ?? 0, context: nil,
+            eventNumber: 0, clickCount: 0, pressure: 0,
+        ))
+        loupe.mouseMoved(with: event)
+        let lens = loupe.judging.lens
+        let scale = loupe.window?.backingScaleFactor ?? 2
+        #expect(lens.isShown)
+        #expect(
+            abs(lens.magnified.width - CGFloat(image.width) * 2 / scale) < 1
+                && abs(lens.magnified.height - CGFloat(image.height) * 2 / scale) < 1,
+            "two of the screen's pixels to one of the edit's: \(lens.magnified)",
+        )
+    }
+
     @Test func `a photo is laid out at its size, or in the shape of an image an edit crops or turns, at its long edge`(
     ) throws {
         let photo = CGSize(width: 1200, height: 800)

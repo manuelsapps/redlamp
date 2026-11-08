@@ -433,7 +433,8 @@ final class LibraryLoupeView: NSView, ThemeFollowing {
             x: Self.inset, y: Self.captionHeight, width: max(bounds.width - Self.inset * 2, 1),
             height: max(bounds.height - Self.captionHeight - Self.inset, 1),
         )
-        let size = renderedSize ?? Self.laidOut(pixelSize, image: image) ?? area.size
+        let laidOut = renderedSize ?? Self.laidOut(pixelSize, image: image)
+        let size = laidOut ?? area.size
         guard size.width > 0, size.height > 0 else { return }
         let frame: CGRect
         if zoom == .actual {
@@ -459,7 +460,9 @@ final class LibraryLoupeView: NSView, ThemeFollowing {
         CATransaction.commit()
         updateMark()
         judging.show(shown?.url, edit: shownEdit, pixelSize: pixelSize)
-        judging.place(JudgingPlacement(photoFrame: frame, bounds: bounds, scale: window?.backingScaleFactor ?? 2))
+        judging.place(JudgingPlacement(
+            photoFrame: frame, bounds: bounds, scale: window?.backingScaleFactor ?? 2, pixels: laidOut,
+        ))
     }
 
     /// An edit rendered at full size is laid out at its own size: its crop's, not the photo's.

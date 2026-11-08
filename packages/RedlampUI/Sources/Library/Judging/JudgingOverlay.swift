@@ -11,6 +11,9 @@ struct JudgingPlacement: Equatable {
     var photoFrame = CGRect.zero
     var bounds = CGRect.zero
     var scale: CGFloat = 2
+    /// The size in pixels the host lays the photo out at: an edit's own where it's rendered at full size, else the
+    /// shape of the image shown, as an edit's crop or turn makes it, at the photo's long edge. Nil while it's unknown.
+    var pixels: CGSize?
 
     var visible: CGRect {
         photoFrame.intersection(bounds)
@@ -805,10 +808,11 @@ final class JudgingLens {
         CATransaction.commit()
     }
 
-    /// The photo magnified, in points: its pixels times the magnification, over the screen's scale.
+    /// The photo magnified, in points: its pixels as the host lays it out times the magnification, over the screen's
+    /// scale.
     private func magnifiedSize(_ overlay: JudgingOverlay) -> CGSize {
         let placement = overlay.placement
-        let pixels = overlay.pixelSize
+        let pixels = placement.pixels ?? overlay.pixelSize
             ?? overlay.shownImage().map { CGSize(width: $0.width, height: $0.height) }
             ?? CGSize(
                 width: placement.photoFrame.width * placement.scale,
