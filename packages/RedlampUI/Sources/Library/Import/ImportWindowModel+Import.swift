@@ -279,7 +279,6 @@ extension ImportWindowModel {
                         + "folder wasn't there, or changed."
                 }
             } catch {
-                let plan = try? await importer.plan(of: entry.id)
                 await stopped(plan, by: error, resuming: true)
             }
             notify(.status)
