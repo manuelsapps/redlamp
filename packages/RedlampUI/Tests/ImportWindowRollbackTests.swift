@@ -26,6 +26,89 @@ struct ImportWindowRollbackTests {
         model.close()
     }
 
+    /// A window's import of 24 photos from a slow card, which the Mac's disk filling up stops once two are done.
+    private static func stoppedByFullDisk(_ fixture: ImportWindowFixture) async throws -> ImportWindowModel {
+        // 4 MB a second, one read at a time: the photos copying when the disk fills are done long before the last.
+        let slow = SimulatedFileSystem(profile: VolumeProfile(
+            name: "slow card", latency: .milliseconds(5), bandwidth: 4_000_000, maxInFlight: 1, isLocal: true,
+            isInternal: false,
+        ))
+        let model = fixture.model(fileSystem: slow)
+        try await model.addFolder(fixture.folder("Card", count: 24, padding: 400_000))
+        await model.browsed()
+        fixture.settle(model)
+        model.importer.interruption.withLock { $0 = .diskFull(afterPhotos: 2) }
+        model.startImport()
+        await model.imported()
+        return model
+    }
+
+    @Test func `an import the disk fills partway offers Resume and Roll Back at once, and Resume finishes it`(
+    ) async throws {
+        let fixture = try await ImportWindowFixture.make()
+        defer { fixture.remove() }
+        let model = try await Self.stoppedByFullDisk(fixture)
+        let copied = ImportWindowFixture.files(in: fixture.backup).count
+        try #require(copied >= 2 && copied < 24)
+        let entry = try #require(model.interrupted.first)
+        #expect(entry.id == model.plan?.id && model.phase == .finished && model.outcome == nil)
+        #expect(model.rollBackTarget == entry.id)
+        #expect(model.importBlocker == "An import that was interrupted has to be resumed or rolled back first.")
+        #expect(model.summary == "The import stopped with \(copied) of 24 photos copied: No space left on device. "
+            + "Resume copies the rest from their cards or folders, which have to be there; Roll Back moves those "
+            + "copied to the Trash.")
+        #expect(model.copied.count == copied && model.chosen.photos == 24 - copied, "the photos copied shown so")
+        #expect(model.sources.allSatisfy { $0.progress == nil } && model.detail(of: model.sources[0]) == "24 photos")
+        #expect(ImportWindowFixture.leftovers(in: fixture.destination).isEmpty, "nothing half copied")
+
+        model.resume()
+        await model.imported()
+        #expect(model.interrupted.isEmpty && model.failure == nil)
+        #expect(model.outcome?.state == .finished && model.outcome?.verified == 24)
+        #expect(ImportWindowFixture.files(in: fixture.backup).count == 24)
+        #expect(ImportWindowFixture.leftovers(in: fixture.destination).isEmpty)
+        #expect(model.chosen.photos == 0 && model.importBlocker == "No photos are chosen.")
+        #expect(model.detail(of: model.sources[0]) == "Safe to erase: every photo on it is in the library.")
+    }
+
+    @Test func `an import the disk fills partway can be rolled back at once, its photos chosen again`() async throws {
+        let fixture = try await ImportWindowFixture.make()
+        defer { fixture.remove() }
+        let model = try await Self.stoppedByFullDisk(fixture)
+        let copied = ImportWindowFixture.files(in: fixture.backup).count
+        try #require(copied >= 2 && copied < 24 && model.rollBackTarget != nil)
+        model.rollBack()
+        await model.imported()
+        let rollback = try #require(model.rollback)
+        defer { Self.emptyTrash(rollback) }
+        #expect(rollback.state == .rolledBack && rollback.rolledBack.count == copied)
+        #expect(model.interrupted.isEmpty && model.rollBackTarget == nil && model.importBlocker == nil)
+        #expect(model.chosen.photos == 24 && model.copied.isEmpty)
+        #expect(model.summary.hasPrefix("Rolled back: the copies of \(ImportWindowModel.count(copied, "photo"))"))
+    }
+
+    @Test func `an Import that finds an import cut short it hadn't heard of offers that for Resume`() async throws {
+        let fixture = try await ImportWindowFixture.make()
+        defer { fixture.remove() }
+        try await Self.interrupted(fixture, count: 6)
+        // A window that hasn't read the journal yet.
+        let next = fixture.model()
+        try await next.addFolder(fixture.folder("Second card", count: 2, from: 20))
+        await next.browsed()
+        fixture.settle(next)
+        #expect(next.importBlocker == nil)
+        next.startImport()
+        await next.imported()
+        let entry = try #require(next.interrupted.first)
+        #expect(next.rollBackTarget == entry.id && entry.id != next.plan?.id)
+        #expect(next.failure?.hasPrefix("The import couldn't start: import \(entry.id.uuidString)") == true)
+        #expect(next.summary.hasPrefix("\(entry.title) was interrupted with"))
+        #expect(next.importBlocker == "An import that was interrupted has to be resumed or rolled back first.")
+        next.resume()
+        await next.imported()
+        #expect(next.interrupted.isEmpty && next.outcome?.verified == 6)
+    }
+
     @Test func `Roll Back after Cancel moves the copies to the Trash, and their photos can be chosen again`(
     ) async throws {
         let fixture = try await ImportWindowFixture.make()

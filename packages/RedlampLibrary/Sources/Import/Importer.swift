@@ -12,6 +12,13 @@ public struct ImportProgress: Sendable, Hashable {
         public var failed = 0
     }
 
+    /// Adding the photos copied to the library, the run's last step: their photo files, a raw and its JPEG two, and
+    /// those the library has so far.
+    public struct Adding: Sendable, Hashable {
+        public var photos: Int
+        public var done: Int
+    }
+
     public var photos: Int
     public var done: Int
     public var failed: Int
@@ -19,6 +26,8 @@ public struct ImportProgress: Sendable, Hashable {
     public var copied: Int64
     /// Each source's part, by its ID.
     public var sources: [String: Source] = [:]
+    /// Once every photo is copied or failed and the run is adding those copied to the library; nil before.
+    public var adding: Adding?
 }
 
 /// What an import did.
@@ -91,6 +100,8 @@ public final class Importer: Sendable {
     public let volumes: VolumeIORegistry
     public let journal: ImportJournal
     let interruption = Mutex<Interruption?>(nil)
+    /// Runs wait, once every photo is copied, before adding the rest to the library (`holdAddingToLibrary`).
+    let holdsAdding = Mutex(false)
     private let serial = Mutex<Task<Void, Never>?>(nil)
 
     /// Photos copied at once from each source volume: more than its readers serve, so the targets'
@@ -108,6 +119,9 @@ public final class Importer: Sendable {
         case beforePlacing(Int)
         /// A rollback, once this many photos' files are in the Trash, before they're logged taken back.
         case afterTakingBack(Int)
+        /// Once this many photos are done, the Mac's disk full: the run throws `ENOSPC`, as its journal's next
+        /// write would, leaving the journal as it is. Once spent, the disk has space again.
+        case diskFull(afterPhotos: Int)
     }
 
     struct ForcedQuit: Error {}
@@ -184,6 +198,18 @@ public final class Importer: Sendable {
         interruption.withLock { $0 = .afterPhotos(photos) }
     }
 
+    /// Fills the Mac's disk once `photos` photos of the next run are done: the run stops with `ENOSPC`, its
+    /// import left to be resumed or rolled back, and the disk has space again for the run after.
+    @_spi(Harness) public func simulateFullDisk(afterPhotos photos: Int) {
+        interruption.withLock { $0 = .diskFull(afterPhotos: photos) }
+    }
+
+    /// Holds the runs, once every photo is copied, before they add the rest to the library, until it's called with
+    /// false: the regression suite's way to see that step, over at once for a few photos.
+    @_spi(Harness) public func holdAddingToLibrary(_ holds: Bool) {
+        holdsAdding.withLock { $0 = holds }
+    }
+
     /// The folders `plan` would make on `fileSystem`, parents first: the destination and the backup, the
     /// folders above them, and the plan's folders below them, that aren't there.
     static func newFolders(of plan: ImportPlan, fileSystem: any LibraryFileSystem) -> [String] {
@@ -224,6 +250,9 @@ public final class Importer: Sendable {
         var unflushed: [Int: Placement] = [:]
         var unflushedSince: ContinuousClock.Instant?
         var flushing = false
+        /// The photo files of the photos placed, once every photo is copied or failed and they're being added to
+        /// the library.
+        var adding: Int?
         /// `verified` and `failed` counted for each source, by its ID.
         var bySource: [String: ImportProgress.Source] = [:]
 
@@ -262,13 +291,12 @@ public final class Importer: Sendable {
         }
 
         /// Runs `update` after the updates asked for before it.
-        func index(_ update: @escaping @Sendable () async -> Int) {
+        func index(_ update: @escaping @Sendable () async -> Void) {
             indexing.withLock { last in
                 let previous = last
                 last = Task {
                     await previous?.value
-                    let inserted = await update()
-                    self.tally.withLock { $0.indexed += inserted }
+                    await update()
                 }
             }
         }
@@ -316,11 +344,22 @@ public final class Importer: Sendable {
             progress?(ImportProgress(
                 photos: plan.items.count, done: tally.verified.count, failed: tally.failed.count, bytes: total,
                 copied: tally.bytes, sources: tally.bySource,
+                adding: tally.adding.map { ImportProgress.Adding(photos: $0, done: min(tally.indexed, $0)) },
             ))
         }
         @Sendable func indexFolders(_ folders: Set<String>) {
             guard !folders.isEmpty else { return }
-            run.index { await self.index(folders, plan: plan) }
+            run.index {
+                await self.index(folders, plan: plan) { inserted in
+                    let counts = run.tally.withLock { tally in
+                        tally.indexed += inserted
+                        return tally
+                    }
+                    if counts.adding != nil {
+                        report(counts)
+                    }
+                }
+            }
         }
 
         let cancelled = Cancellation()
@@ -354,6 +393,17 @@ public final class Importer: Sendable {
                                         quitting.set()
                                         throw ForcedQuit()
                                     }
+                                    let settled = run.counts.settled
+                                    if self.interruption.withLock({ interruption in
+                                        guard case let .diskFull(count) = interruption, settled >= count else {
+                                            return false
+                                        }
+                                        interruption = nil
+                                        return true
+                                    }) {
+                                        cancelled.set()
+                                        throw POSIXError(.ENOSPC)
+                                    }
                                 }
                             }
                         }
@@ -373,7 +423,16 @@ public final class Importer: Sendable {
             return tally.unflushed
         }
         _ = try await flush(rest, plan: plan, copier: copier, run: run, log: log)
+        if library.indexer != nil, library.index != nil {
+            run.tally.withLock { tally in
+                let files = tally.verified.reduce(0) { $0 + plan.items[$1].photos.count }
+                tally.adding = files > 0 ? files : nil
+            }
+        }
         report(run.counts)
+        while holdsAdding.withLock({ $0 }), !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
         indexFolders(run.tally.withLock { state in
             defer { state.waitingToIndex = [] }
             return state.waitingToIndex
@@ -622,22 +681,21 @@ extension Importer {
     // MARK: - The index
 
     /// Indexes `folders` at the destination, adding the destination to the library first if it isn't
-    /// in it, and passes what the indexer reports to the live lists; returns how many photos it added.
-    private func index(_ folders: Set<String>, plan: ImportPlan) async -> Int {
-        guard let indexer = library.indexer, let index = library.index else { return 0 }
+    /// in it, and passes what the indexer reports to the live lists; tells `inserted` how many photos it adds
+    /// as each batch is written.
+    private func index(_ folders: Set<String>, plan: ImportPlan, inserted: @Sendable (Int) -> Void) async {
+        guard let indexer = library.indexer, let index = library.index else { return }
         let destination = LibraryIndexer.path(plan.settings.destination)
         let inLibrary = await (try? index.read { try $0.root(containing: destination) }) != nil
         let events = inLibrary
             ? indexer.update(folders.sorted().map { FolderChange(URL(fileURLWithPath: $0, isDirectory: true)) })
             : indexer.index([plan.settings.destination])
-        var inserted = 0
         for await event in events {
             library.live?.receive(event)
             if case let .photosInserted(ids) = event {
-                inserted += ids.count
+                inserted(ids.count)
             }
         }
-        return inserted
     }
 
     // MARK: - Outcome

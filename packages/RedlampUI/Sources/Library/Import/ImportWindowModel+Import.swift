@@ -13,6 +13,9 @@ extension ImportWindowModel {
         if phase == .planning || phase == .copying {
             return "An import is running."
         }
+        if phase == .adding {
+            return "The import is adding its photos to the library."
+        }
         if phase == .rollingBack {
             return "An import is being rolled back."
         }
@@ -66,11 +69,13 @@ extension ImportWindowModel {
         together.add(included.flatMap(\.session.photos).filter { !copied.contains($0.id) })
         let importer = importer
         importing = Task { [weak self] in
+            var made: ImportPlan?
             do {
                 let planned = await self?.withPreset(settings) ?? settings
                 let plan = try await together.plan(planned, destinationFileSystem: destinationFileSystem)
                 try Task.checkCancellation()
                 guard let self else { return }
+                made = plan
                 self.plan = plan
                 guard !plan.items.isEmpty else {
                     phase = .finished
@@ -96,14 +101,67 @@ extension ImportWindowModel {
                 }
                 await finished(outcome, plan: plan)
             } catch {
-                guard let self else { return }
-                phase = .finished
-                failure = error is CancellationError ? "The import was cancelled before anything was copied."
-                    : "The import couldn't start: \(String(describing: error))"
-                notify(.status)
+                await self?.stopped(made, by: error)
             }
             self?.importing = nil
         }
+    }
+
+    /// An import or a Resume that threw: before its plan was copied from, or partway, as when the Mac's disk
+    /// fills. The journal keeps one stopped partway unfinished, so it's offered for Resume and Roll Back at once,
+    /// and the photos it placed are shown as copied.
+    private func stopped(_ plan: ImportPlan?, by error: any Error, resuming: Bool = false) async {
+        // Read before anything changes, so the window never says it's over without what it copied.
+        let entries = await (try? importer.unfinishedEntries()) ?? []
+        var placed: [(String, URL)] = []
+        if let plan {
+            placed = await Self.placed(plan, failed: [], on: destinationFileSystem)
+            self.plan = plan
+        }
+        interrupted = entries
+        phase = .finished
+        for index in sources.indices {
+            sources[index].progress = nil
+        }
+        copied.formUnion(placed.map(\.0))
+        let unfinished = plan.flatMap { plan in interrupted.first { $0.id == plan.id } }
+        let reason = Self.reason(error)
+        if let plan, unfinished != nil || !placed.isEmpty {
+            failure = placed.isEmpty ? "The import stopped before any photo was copied: \(reason)."
+                : "The import stopped with \(placed.count) of \(Self.count(plan.items.count, "photo")) copied: "
+                + "\(reason)."
+        } else if resuming {
+            failure = "The interrupted import couldn't be resumed: \(reason)"
+        } else {
+            failure = error is CancellationError ? "The import was cancelled before anything was copied."
+                : "The import couldn't start: \(reason)"
+        }
+        notify(.status)
+        notify(.sources)
+        notify(.photos(ids: nil))
+    }
+
+    /// An error as the window says it: a system call's in the system's words.
+    private static func reason(_ error: any Error) -> String {
+        switch error {
+        case let error as POSIXError: String(cString: strerror(error.code.rawValue))
+        case is CancellationError: "it was cancelled"
+        default: String(describing: error)
+        }
+    }
+
+    /// The photos of `plan` but `failed` at the destination, each with the place of its first file there.
+    private static func placed(
+        _ plan: ImportPlan, failed: Set<String>, on destinationFileSystem: any LibraryFileSystem,
+    ) async -> [(String, URL)] {
+        await Task.detached(priority: .userInitiated) {
+            plan.items.filter { !failed.contains($0.photo) }.compactMap { item -> (String, URL)? in
+                guard let copy = item.photos.first, let target = plan.targets(of: copy).first,
+                      destinationFileSystem.exists(target)
+                else { return nil }
+                return (item.photo, target)
+            }
+        }.value
     }
 
     /// Cancel: stops the import once the photos being copied are in place, so nothing is left half copied; or
@@ -117,8 +175,22 @@ extension ImportWindowModel {
         await importing?.value
     }
 
+    /// The importer's progress; once every photo is copied, the window says they're being added to the library,
+    /// and shows those placed as copied, so the next can be chosen meanwhile.
     func progressed(_ progress: ImportProgress) {
-        guard phase == .copying else { return }
+        guard phase == .copying || phase == .adding else { return }
+        let adding = progress.adding != nil
+        if adding, phase == .copying, let plan {
+            let destinationFileSystem = destinationFileSystem
+            Task { [weak self] in
+                let placed = await Self.placed(plan, failed: [], on: destinationFileSystem)
+                guard let self, phase == .adding else { return }
+                copied.formUnion(placed.map(\.0))
+                notify(.status)
+                notify(.photos(ids: nil))
+            }
+        }
+        phase = adding ? .adding : .copying
         self.progress = progress
         for index in sources.indices {
             sources[index].progress = progress.sources[sources[index].id]
@@ -128,6 +200,10 @@ extension ImportWindowModel {
     }
 
     private func finished(_ outcome: ImportOutcome, plan: ImportPlan) async {
+        // Read before anything changes, so the window never says it's over without what it copied.
+        let placed = await Self.placed(
+            plan, failed: Set(outcome.failures.map(\.photo)), on: destinationFileSystem,
+        )
         self.outcome = outcome
         phase = .finished
         preferences.update { $0.counters = plan.counters }
@@ -135,16 +211,6 @@ extension ImportWindowModel {
             sources[index].progress = nil
             sources[index].outcome = outcome.sources.first { $0.id == sources[index].id }
         }
-        let failed = Set(outcome.failures.map(\.photo))
-        let destinationFileSystem = destinationFileSystem
-        let placed = await Task.detached(priority: .userInitiated) {
-            plan.items.filter { !failed.contains($0.photo) }.compactMap { item -> (String, URL)? in
-                guard let copy = item.photos.first, let target = plan.targets(of: copy).first,
-                      destinationFileSystem.exists(target)
-                else { return nil }
-                return (item.photo, target)
-            }
-        }.value
         copied.formUnion(placed.map(\.0))
         failure = outcome.state == .stopped
             ? "The import was cancelled: the photos copied so far are in place, the others are still where they were; "
@@ -157,14 +223,14 @@ extension ImportWindowModel {
             showInLibrary(placed.map(\.1))
         }
         if preferences.ejectsAfterImport {
-            for source in sources where source.isCard && source.outcome?.isSafeToErase == true {
+            for source in sources where source.isCard && isSafeToErase(source) {
                 await eject(source.id)
             }
         }
     }
 
-    /// Resume: finishes the imports a forced quit cut short, copying the rest from their sources, which
-    /// have to be there, then shows their photos in Library as an import that ran straight through does;
+    /// Resume: finishes the imports a forced quit or an error cut short, copying the rest from their sources,
+    /// which have to be there, then shows their photos in Library as an import that ran straight through does;
     /// or finishes a rollback that was stopped or cut short.
     func resume() {
         guard let entry = interrupted.first, importing == nil else { return }
@@ -182,6 +248,7 @@ extension ImportWindowModel {
             let latest = ImportLatest<ImportProgress>()
             let interval = Self.progressInterval
             do {
+                plan = try? await importer.plan(of: entry.id)
                 let outcomes = try await importer.recover { [weak self] progress in
                     guard latest.set(progress) else { return }
                     Task { @MainActor [weak self] in
@@ -212,8 +279,7 @@ extension ImportWindowModel {
                         + "folder wasn't there, or changed."
                 }
             } catch {
-                phase = .finished
-                failure = "The interrupted import couldn't be resumed: \(String(describing: error))"
+                await stopped(plan, by: error, resuming: true)
             }
             notify(.status)
             importing = nil
@@ -317,7 +383,8 @@ extension ImportWindowModel {
         let roots = [settings.destination] + (settings.backup.map { [$0] } ?? [])
         let verified = progress?.done ?? outcome?.verified
         let total = progress?.photos ?? outcome?.photos
-        guard let verified, let total, phase == .copying || phase == .finished, rollback == nil else { return [] }
+        guard let verified, let total, phase == .copying || phase == .adding || phase == .finished, rollback == nil
+        else { return [] }
         return roots.map { "\($0.lastPathComponent): \(verified) of \(Self.count(total, "photo")) verified" }
     }
 }

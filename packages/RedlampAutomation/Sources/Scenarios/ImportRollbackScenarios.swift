@@ -10,7 +10,7 @@
     /// thumbnails, all from folders of the run's own: never a card, and never this Mac's volumes. What a rollback
     /// moves to the Trash, the scenario takes out of it.
     enum ImportRollbackScenarios {
-        static let all: [Scenario] = [afterCancel, interrupted, resumed, jpegPreviews]
+        static let all: [Scenario] = [afterCancel, interrupted, resumed, fullDisk, shootAtATime, jpegPreviews]
 
         static let afterCancel = Scenario(
             "import.roll-back",
@@ -123,6 +123,137 @@
                     && model.selectedPhotos.count == 6 && model.module == .library
             }
             app.covered(.feature("library.import"), via: .mouse)
+        }
+
+        static let fullDisk = Scenario(
+            "import.full-disk-resume",
+            "An import from a card that the Mac's disk filling up stops partway offers Resume in Import's place and "
+                + "Roll Back at once, says how many photos were copied, and Resume finishes it once there's space",
+            claims: [.feature("library.import")],
+        ) { app in
+            try app.openWorking()
+            let card = try ImportCardScratch(app)
+            let imported = card.destination.appending(path: "Imported", directoryHint: .isDirectory)
+            defer {
+                try? app.main { model in ImportWindowController.forget(imported, in: model) }
+                card.remove(app)
+            }
+            try app.main { _ in ImportWindowController.ignoresVolumes = true }
+            try app.choose(.importPhotos)
+            try app.waitForImportWindow()
+            try app.inImportWindow { window in
+                window.prepare(destination: card.destination, backup: card.backup, folders: "Imported", names: "{name}")
+            }
+            try app.run("adding the card") { _ in try? await ImportWindowController.current?.add(card: card.root) }
+            try app.wait("the card browsed", timeout: 60) { _ in
+                ImportWindowController.current.map { $0.isBrowsed && $0.photoCount == card.count } == true
+            }
+            try app.inImportWindow { $0.simulateFullDisk(afterPhotos: 2) }
+            try app.clickInImportWindow("import.import")
+            try app.waitInImportWindow("the import stopped, waiting to be resumed", timeout: 120) { _ in
+                ImportWindowController.current.map { $0.isFinished && $0.isInterrupted } == true
+            }
+            let (copied, summary, offered) = try app.inImportWindow { ($0.copiedCount, $0.summary, $0.offersResume) }
+            try app.expect(copied >= 2 && copied < card.count, "\(copied) of \(card.count) photos shown as copied")
+            try app.expect(
+                summary.hasPrefix("The import stopped with \(copied) of \(card.count) photos copied: No space left")
+                    && !summary.contains("couldn't start"),
+                summary,
+            )
+            try app.expect(offered, "Resume is offered in Import's place")
+            try app.expect(try app.inImportWindow { $0.canRollBack }, "Roll Back is offered at once")
+
+            try app.clickInImportWindow("import.resume")
+            try app.waitInImportWindow("the import resumed and finished", timeout: 120) { _ in
+                ImportWindowController.current.map { $0.isFinished && !$0.isInterrupted } == true
+            }
+            let result = try app.inImportWindow { $0.result.map { "\($0.verified) \($0.safeToErase)" } }
+            try app.expect(result == "\(card.count) true", "Resumed: \(result ?? "nothing")")
+            let detail = try app.inImportWindow { $0.shownSourceDetail }
+            try app.expect(detail == "Safe to erase: every photo on it is in the library.", detail ?? "no card")
+            try app.expect(try app.inImportWindow { !$0.offersResume }, "Import is back in Resume's place")
+            try app.wait("Library showing the photos imported, selected", timeout: 60) { model in
+                model.folder?.standardizedFileURL.path == imported.standardizedFileURL.path
+                    && model.selectedPhotos.count == card.count && model.module == .library
+            }
+            app.covered(.feature("library.import"), via: .mouse)
+        }
+
+        static let shootAtATime = Scenario(
+            "import.shoot-at-a-time",
+            "A card imported a shoot at a time: while the first shoot's photos are added to the library the window "
+                + "says so with nothing to cancel and the next shoot is chosen meanwhile, the card isn't safe to erase "
+                + "until the last shoot is in, and the button reads Import throughout",
+            claims: [.feature("library.import")],
+        ) { app in
+            try app.openWorking()
+            let card = try ImportCardScratch(app)
+            let imported = card.destination.appending(path: "Imported", directoryHint: .isDirectory)
+            defer {
+                try? app.inImportWindow { $0.holdAddingToLibrary(false) }
+                try? app.main { model in ImportWindowController.forget(imported, in: model) }
+                card.remove(app)
+            }
+            try app.main { _ in ImportWindowController.ignoresVolumes = true }
+            try app.choose(.importPhotos)
+            try app.waitForImportWindow()
+            try app.inImportWindow { window in
+                window.prepare(destination: card.destination, backup: card.backup, folders: "Imported", names: "{name}")
+            }
+            try app.run("adding the card") { _ in try? await ImportWindowController.current?.add(card: card.root) }
+            try app.wait("the card browsed", timeout: 60) { _ in
+                ImportWindowController.current.map { $0.isBrowsed && $0.photoCount == card.count } == true
+            }
+            // Places in the grid hold still once the photos are in their moments by every capture time read.
+            try app.run("the photos grouped again") { _ in await ImportWindowController.current?.regrouped() }
+            // The first shoot: the first four photos, the others left for later with Space.
+            let first = 4
+            let later = Array(first ..< card.count)
+            try app.inImportWindow { $0.select(later) }
+            try app.pressInImportWindow(KeyCombo(.space))
+            try app.wait("the first shoot chosen") { _ in ImportWindowController.current?.chosenCount == first }
+
+            try app.inImportWindow { $0.holdAddingToLibrary(true) }
+            try app.clickInImportWindow("import.import")
+            try app.waitInImportWindow("the photos being added to the library", timeout: 120) { _ in
+                ImportWindowController.current?.isAdding == true
+            }
+            let (summary, cancels) = try app.inImportWindow { ($0.summary, $0.offersCancel) }
+            try app.expect(summary.hasPrefix("Adding \(first) photos to the library… "), summary)
+            try app.expect(!cancels, "Cancel Import is offered while the photos copied are added to the library")
+            // The next shoot, chosen meanwhile.
+            try app.inImportWindow { $0.select(later) }
+            try app.pressInImportWindow(KeyCombo(.space))
+            do {
+                try app.wait("the next shoot chosen while the first is added") { _ in
+                    ImportWindowController.current.map { $0.isAdding && $0.chosenCount == later.count } == true
+                }
+            } catch {
+                let seen = try? app.inImportWindow { window in
+                    "\(window.state); \(window.chosenCount) chosen, \(window.copiedCount) copied, "
+                        + "\(window.selectedCount) selected; the card: \(window.shownSourceDetail ?? "none")"
+                }
+                throw ScenarioFailure("The next shoot wasn't chosen while the first was added: \(seen ?? "no window")")
+            }
+            try app.inImportWindow { $0.holdAddingToLibrary(false) }
+            try app.waitInImportWindow("the first shoot imported", timeout: 120) { _ in
+                ImportWindowController.current?.isFinished == true
+            }
+            let waiting = try app.inImportWindow { ($0.shownSourceDetail, $0.importTitle, $0.chosenCount) }
+            try app.expect(waiting.0 == "Not safe to erase: \(later.count) photos not imported yet.", waiting.0 ?? "")
+            try app.expect(waiting.1 == "Import" && waiting.2 == later.count, "\(waiting.1), \(waiting.2) chosen")
+
+            try app.clickInImportWindow("import.import")
+            try app.waitInImportWindow("the next shoot imported", timeout: 120) { _ in
+                ImportWindowController.current.map { $0.isFinished && $0.result?.verified == later.count } == true
+            }
+            let done = try app.inImportWindow { ($0.shownSourceDetail, $0.result?.safeToErase, $0.importTitle) }
+            try app.expect(done.0 == "Safe to erase: every photo on it is in the library.", done.0 ?? "")
+            try app.expect(
+                done.1 == true && done.2 == "Import",
+                "safe to erase \(String(describing: done.1)), \(done.2)",
+            )
+            app.covered(.feature("library.import"), via: .key)
         }
 
         static let jpegPreviews = Scenario(

@@ -240,7 +240,10 @@ struct ImportWindowTests {
         let outcome = try #require(model.outcome)
         #expect(outcome.state == .finished && outcome.verified == 3 && outcome.isSafeToErase)
         #expect(model.phase == .finished && model.failure == nil && model.chosen.photos == 0)
-        #expect(model.detail(of: model.sources[0]).hasPrefix("Safe to erase"))
+        #expect(
+            model.detail(of: model.sources[0]) == "Not safe to erase: 1 photo not imported yet.",
+            "the photo not chosen is on the card only",
+        )
         let day = "2026/2026-10-05/"
         let photos = ["IMG_0001.JPG", "IMG_0002.JPG", "IMG_0003.JPG"]
         #expect(ImportWindowFixture.files(in: fixture.backup) == Set(photos.map { day + $0 }))
@@ -332,6 +335,70 @@ extension ImportWindowTests {
         #expect(ImportWindowFixture.leftovers(in: fixture.destination).isEmpty)
     }
 
+    @Test func `the button reads Import after an import, and Resume takes its place while an import cut short waits`(
+    ) async throws {
+        let fixture = try await ImportWindowFixture.make()
+        defer { fixture.remove() }
+        let model = fixture.model()
+        let controller = ImportWindowController(model: model)
+        defer { controller.window?.orderOut(nil) }
+        try await model.addFolder(fixture.folder("Card", count: 8))
+        await model.browsed()
+        fixture.settle(model)
+        let names = Dictionary(model.photos.map { ($0.primary.name, $0.id) }) { first, _ in first }
+        let later = try (2 ..< 8).map { try #require(names[ImportWindowFixture.name($0)]) }
+        model.choose(later, false)
+        model.startImport()
+        await model.imported()
+        #expect(model.outcome?.verified == 2 && model.phase == .finished)
+        #expect(controller.importButton.title == "Import" && !controller.importButton.isHidden)
+        #expect(controller.importButton.keyEquivalent == "\r" && controller.resumeButton.isHidden)
+
+        model.choose(later, true)
+        model.importer.interruption.withLock { $0 = .diskFull(afterPhotos: 1) }
+        model.startImport()
+        await model.imported()
+        #expect(!model.interrupted.isEmpty && controller.importButton.isHidden && !controller.resumeButton.isHidden)
+        #expect(controller.resumeButton.keyEquivalent == "\r" && controller.importButton.keyEquivalent.isEmpty)
+
+        controller.resumeButton.performClick(nil)
+        await model.imported()
+        #expect(model.interrupted.isEmpty && model.outcome?.state == .finished)
+        #expect(controller.importButton.title == "Import" && !controller.importButton.isHidden)
+        #expect(controller.importButton.keyEquivalent == "\r" && controller.resumeButton.isHidden)
+    }
+
+    @Test func `while the photos copied are added to the library the window says so, with nothing to cancel, and the next are chosen meanwhile`(
+    ) async throws {
+        let fixture = try await ImportWindowFixture.make()
+        defer { fixture.remove() }
+        let model = fixture.model()
+        let controller = ImportWindowController(model: model)
+        defer { controller.window?.orderOut(nil) }
+        try await model.addFolder(fixture.folder("Card", count: 6))
+        await model.browsed()
+        fixture.settle(model)
+        let names = Dictionary(model.photos.map { ($0.primary.name, $0.id) }) { first, _ in first }
+        let later = try (3 ..< 6).map { try #require(names[ImportWindowFixture.name($0)]) }
+        model.choose(later, false)
+        model.importer.holdsAdding.withLock { $0 = true }
+        model.startImport()
+        try await waitUntil("the photos being added to the library") { model.phase == .adding }
+        #expect(model.summary == "Adding 3 photos to the library… 0 of 3")
+        #expect(model.isBusy && !model.canCancel && controller.cancelButton.isHidden)
+        #expect(model.importBlocker == "The import is adding its photos to the library.")
+        #expect(model.detail(of: model.sources[0]) == "Copied 3 of 3; adding them to the library…")
+        #expect(model.destinationLines == ["Pictures: 3 of 3 photos verified", "Backup: 3 of 3 photos verified"])
+        try await waitUntil("the photos copied shown so") { model.copied.count == 3 }
+        model.choose(later, true)
+        #expect(model.chosen.photos == 3, "the next photos chosen meanwhile")
+
+        model.importer.holdsAdding.withLock { $0 = false }
+        await model.imported()
+        #expect(model.phase == .finished && model.outcome?.indexed == 3 && model.failure == nil)
+        #expect(model.chosen.photos == 3 && model.importBlocker == nil && controller.importButton.isEnabled)
+    }
+
     @Test func `a card inserted opens the import window on it while Settings says so`() async throws {
         let fixture = try await ImportWindowFixture.make()
         defer { fixture.remove() }
@@ -394,6 +461,43 @@ extension ImportWindowTests {
             #expect(model.sources.first?.isEjected == ejects)
             model.close()
         }
+    }
+
+    @Test func `a card is safe to erase, and ejected after Import, only once every photo on it is in the library`(
+    ) async throws {
+        let fixture = try await ImportWindowFixture.make()
+        defer { fixture.remove() }
+        try await fixture.index(fixture.folder("Shelf", count: 1))
+        let card = try fixture.cardSource(fixture.card("EOS_DIGITAL", count: 6))
+        let ejected = Mutex<[String]>([])
+        let model = fixture.model()
+        model.ejector = { card in ejected.withLock { $0.append(card.id) } }
+        fixture.preferences.ejectsAfterImport = true
+        model.add(card)
+        await model.browsed()
+        fixture.settle(model)
+        // One shoot of the card: two of the five photos the library hasn't got.
+        let names = Dictionary(model.photos.map { ($0.primary.name, $0.id) }) { first, _ in first }
+        let later = try ["IMG_0003.JPG", "IMG_0004.JPG", "IMG_0005.JPG"].map { try #require(names[$0]) }
+        model.choose(later, false)
+        model.startImport()
+        await model.imported()
+        let source = try #require(model.sources.first)
+        #expect(model.outcome?.verified == 2 && source.outcome?.isSafeToErase == true, "the import's own verdict")
+        #expect(!model.isSafeToErase(source) && model.notImported(source) == 3)
+        #expect(model.detail(of: source) == "Not safe to erase: 3 photos not imported yet.")
+        #expect(ejected.withLock { $0 }.isEmpty && !source.isEjected, "a card still holding photos to import stays")
+
+        // The next shoot: the rest.
+        model.choose(later, true)
+        model.startImport()
+        await model.imported()
+        let done = try #require(model.sources.first)
+        #expect(model.outcome?.verified == 3 && model.isSafeToErase(done) && model.notImported(done) == 0)
+        #expect(ejected.withLock { $0 } == [card.id] && done.isEjected)
+        #expect(model.detail(of: done) == "Ejected. 3 of 3 photos copied and verified.")
+        model.sources[0].isEjected = false
+        #expect(model.detail(of: model.sources[0]) == "Safe to erase: every photo on it is in the library.")
     }
 
     @Test func `the destination, backup, templates, raw only and keywords are kept from one import to the next`(

@@ -59,7 +59,7 @@ public final class ImportPreferences {
         set { update { $0.startsWhenCardInserted = newValue } }
     }
 
-    /// Cards are ejected once an import is over and every photo copied from them is verified.
+    /// Cards are ejected once an import is over and they can be erased: every photo on them is in the library.
     public var ejectsAfterImport: Bool {
         get { settings.ejectsWhenDone }
         set { update { $0.ejectsWhenDone = newValue } }
