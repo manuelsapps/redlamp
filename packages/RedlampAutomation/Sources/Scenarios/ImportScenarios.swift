@@ -101,13 +101,23 @@
             }
             try app.expectImportSelection([2, 3], "Shift-← three times, from the photo clicked")
 
+            // Ungrouped, the photos are in another order: the selection and the photo clicked are followed by name.
+            let inMoments = try app.inImportWindow { window in window.groups.flatMap(\.photos) }
             try app.chooseInImportWindow("None", inPopUp: "import.group-by")
             try app.wait("the photos ungrouped") { _ in
                 ImportWindowController.current.map { $0.groups.count == 1 && $0.groups[0].name.isEmpty } == true
             }
-            try app.expectImportSelection([2, 3], "the selection kept as the grid is reloaded")
-            try app.clickInImportGrid(photo: 5, modifiers: .shift)
-            try app.expectImportSelection([3, 4, 5], "Shift-click from the photo clicked before the reload")
+            let ungrouped = try app.inImportWindow { window in window.groups.flatMap(\.photos) }
+            guard let clicked = ungrouped.firstIndex(of: inMoments[3]),
+                  let other = ungrouped.firstIndex(of: inMoments[2])
+            else { throw ScenarioFailure("The photos ungrouped aren't those in moments: \(ungrouped)") }
+            try app.expectImportSelection([clicked, other].sorted(), "the selection kept as the grid is reloaded")
+            let target = clicked + 2 < ungrouped.count ? clicked + 2 : clicked - 2
+            try app.clickInImportGrid(photo: target, modifiers: .shift)
+            try app.expectImportSelection(
+                Array(min(clicked, target) ... max(clicked, target)),
+                "Shift-click from the photo clicked before the reload",
+            )
             try app.chooseInImportWindow("Moment", inPopUp: "import.group-by")
             app.covered(.feature("library.import"), via: .mouse)
         }
