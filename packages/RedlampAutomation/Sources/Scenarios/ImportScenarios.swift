@@ -536,12 +536,13 @@
             pause(0.1)
         }
 
-        /// Waits for the import grid's selection to be the photos at `places`; a failure says what it is.
+        /// Waits for the import grid's selection to be the photos at `places`; a failure says what it is, or what
+        /// kept the wait from reading it.
         func expectImportSelection(_ places: [Int], _ what: String) throws {
             do {
                 try wait("\(what) selects \(places)") { _ in ImportWindowController.current?.selectedPlaces == places }
             } catch {
-                let selected = try inImportWindow { $0.selectedPlaces }
+                guard let selected = try? inImportWindow({ $0.selectedPlaces }) else { throw error }
                 throw ScenarioFailure("\(what) selects \(selected), not \(places) (\(importWindowState()))")
             }
         }
