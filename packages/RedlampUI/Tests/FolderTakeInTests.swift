@@ -119,4 +119,48 @@ struct FolderTakeInTests {
         #expect(try await FolderRemovalTests.ids("rating>=4", relaunched) == rated)
         #expect(try await FolderRemovalTests.ids("kw:Lisbon", relaunched) == rated)
     }
+
+    @Test func `a folder a quit kept the library from taking in is taken in at the next launch`() async throws {
+        let sandbox = SourcesSandbox()
+        defer { sandbox.remove() }
+        try sandbox.photos(["A.jpg"])
+        let (shoots, trip) = try Self.shoots(in: sandbox)
+        let first = try await sandbox.open()
+        let service = try #require(sandbox.service)
+        try await FolderRemovalTests.add(trip, to: first.library, service: service)
+        service.follow([sandbox.root, trip, shoots])
+        try await SourcesSandbox.eventually { await service.canShow(shoots, includingSubfolders: true) }
+        service.close()
+        let suite = "folder-take-in-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { UserDefaults().removePersistentDomain(forName: suite) }
+        let paths = LibraryPaths(root: sandbox.base.appending(path: "Library", directoryHint: .isDirectory))
+        func libraryService(for library: FolderLibrary) -> LibraryService {
+            LibraryService(paths: paths, sidecars: library.sidecars, defaults: defaults) { url, size in
+                StoreThumbnailMaker.imageIO(url, nil, size)
+            }
+        }
+
+        // Folders took Trip into Shoots, and the app quit before the library took it in.
+        let quitting = FolderLibrary()
+        libraryService(for: quitting).takeIn([trip])
+        #expect(defaults.stringArray(forKey: LibraryService.takingInKey) == [LibraryService.path(trip)])
+
+        let library = FolderLibrary()
+        library.add([sandbox.root, shoots])
+        let relaunched = libraryService(for: library)
+        library.attach(relaunched)
+        sandbox.closes(relaunched)
+        let kept = Set([sandbox.root, shoots].map(LibraryService.path))
+        var roots: Set<String> = []
+        try await SourcesSandbox.eventually {
+            guard relaunched.isReady else { return false }
+            roots = try await Self.indexRoots(relaunched)
+            return roots == kept
+        }
+        #expect(roots == kept, "the index takes Trip in")
+        try await SourcesSandbox.eventually { defaults.stringArray(forKey: LibraryService.takingInKey) == nil }
+        #expect(defaults.stringArray(forKey: LibraryService.takingInKey) == nil, "and forgets it")
+        #expect(try await FolderRemovalTests.ids("", relaunched).count == 4)
+    }
 }

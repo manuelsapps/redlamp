@@ -81,8 +81,13 @@ public final class LibraryService {
     /// Removals asked for before the library was open: done as it opens.
     @ObservationIgnored private var waitingRemovals: [(root: URL, kept: [URL])] = []
     /// The roots Folders took into a root holding them (`takeIn`), by path, that the index may still keep as roots
-    /// of their own.
-    @ObservationIgnored private var takingIn: Set<String> = []
+    /// of their own: kept for the next launch, as indexing the root holding them can outlast this one.
+    @ObservationIgnored private var takingIn: Set<String> = [] {
+        didSet {
+            defaults?.set(takingIn.isEmpty ? nil : takingIn.sorted(), forKey: Self.takingInKey)
+        }
+    }
+
     /// As it opens, the library takes out the roots Folders doesn't have (`start`).
     @ObservationIgnored private var removesOthers = false
     /// Called once a folder has left the library, however it was taken out (`remove`, and as the library opens):
@@ -124,6 +129,8 @@ public final class LibraryService {
     static let damagedKey = "library.indexDamaged"
     /// The defaults key keeping the photos whose XMP the app quit before syncing, for the next launch.
     static let xmpWaitingKey = "library.xmpWaiting"
+    /// The defaults key keeping the roots Folders took in that the index hadn't yet (`takingIn`).
+    static let takingInKey = "library.takingIn"
 
     /// `sidecars` is the placement Folders and the editor read and write sidecars through; `thumbnail`
     /// the engine's `decodeThumbnail(for:maxPixelSize:)`, and `photos` Photos' images, which the store's of photos
@@ -146,6 +153,7 @@ public final class LibraryService {
         if let defaults, let saved = SidecarLocator.saved(in: defaults) {
             sidecars.locator = saved
         }
+        takingIn = Set(defaults?.stringArray(forKey: Self.takingInKey) ?? [])
         filters.service = self
     }
 
