@@ -174,13 +174,14 @@ struct ImportWindowTests {
         }
 
         let oneLine = height(folders)
+        // Auto Layout rounds a frame to the screen's pixels; a line can be a fraction of a point taller.
         let twoLines = try oneLine + NSLayoutManager().defaultLineHeight(for: #require(folders.font))
         try type("{date:yyyy}/{date:yyyy-MM-dd} {text:shoot}/{camera}", in: folders)
-        #expect(height(folders) == twoLines, "a template longer than the column, as it's typed")
+        #expect(abs(height(folders) - twoLines) < 1, "a template longer than the column, as it's typed")
         try type(String(repeating: "{date:yyyy-MM-dd}/", count: 8), in: folders)
-        #expect(height(folders) == twoLines, "no more than two lines")
+        #expect(abs(height(folders) - twoLines) < 1, "no more than two lines")
         window.makeFirstResponder(nil)
-        #expect(height(folders) == twoLines, "once typed")
+        #expect(abs(height(folders) - twoLines) < 1, "once typed")
         try type("{name}", in: folders)
         #expect(height(folders) == oneLine, "a short template on one line")
 
