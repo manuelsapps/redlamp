@@ -193,7 +193,8 @@ final class LibraryGridCell {
             isMenuTarget = false
             isDropTarget = false
         }
-        root.opacity = item.metadata.flag == .reject ? 0.45 : 1
+        // Only the photo dims: a reject's badges keep their strength, to read on a light photo.
+        thumbnail.opacity = item.metadata.flag == .reject ? 0.45 : 1
         showBadges(of: item)
     }
 
