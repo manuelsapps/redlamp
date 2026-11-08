@@ -546,10 +546,7 @@ extension LibraryService {
     ) async {
         await core.recovered()
         let roots = paths.filter { !isInICloudDrive($0) }
-        let known = await Set((try? core.index.read { reader -> [String] in
-            let removed = try Set(reader.removedRoots().values)
-            return try reader.roots().map(\.path).filter { !removed.contains($0) }
-        }) ?? [])
+        let known = await indexRoots(core)
         let added = roots.filter { !known.contains($0) }
         if !added.isEmpty {
             for await event in core.indexer.index(added.map { URL(fileURLWithPath: $0, isDirectory: true) }) {
@@ -572,14 +569,26 @@ extension LibraryService {
         }
     }
 
+    /// The paths of the roots the index has, but those being taken out.
+    private nonisolated static func indexRoots(_ core: LibraryCore) async -> Set<String> {
+        await Set((try? core.index.read { reader -> [String] in
+            let removed = try Set(reader.removedRoots().values)
+            return try reader.roots().map(\.path).filter { !removed.contains($0) }
+        }) ?? [])
+    }
+
     /// Takes in the roots of `takingIn` that one of `roots`, those indexed, holds and that `paths`, those followed,
-    /// don't have: each stays in the index as the holding root's folders.
+    /// don't have: each stays in the index as the holding root's folders. One whose holding root isn't in the index,
+    /// as when its volume didn't answer, waits.
     private nonisolated static func takeIn(
         _ takingIn: Set<String>, by roots: [String], following paths: [String], core: LibraryCore,
         report: @Sendable (Progress) async -> Void,
     ) async {
+        guard !takingIn.isEmpty else { return }
+        let index = await indexRoots(core)
+        let indexed = roots.filter(index.contains)
         let held = takingIn.filter { path in
-            !paths.contains(path) && roots.contains { path.hasPrefix($0 == "/" ? $0 : $0 + "/") }
+            !paths.contains(path) && indexed.contains { path.hasPrefix($0 == "/" ? $0 : $0 + "/") }
         }
         guard !held.isEmpty else { return }
         let kept = paths.map { URL(fileURLWithPath: $0, isDirectory: true) }
