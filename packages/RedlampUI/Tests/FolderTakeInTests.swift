@@ -81,8 +81,14 @@ struct FolderTakeInTests {
         service.follow([sandbox.root, trip, shoots])
         try await SourcesSandbox.eventually { await service.canShow(shoots, includingSubfolders: true) }
         try #require(try await Self.indexRoots(service) == Set([sandbox.root, trip, shoots].map(LibraryService.path)))
-        let rated = try await FolderRemovalTests.ids("rating>=4", service)
-        try #require(rated.count == 1)
+        // What the index changed reaches the query engine a moment after.
+        var rated: [Int64] = []
+        try await SourcesSandbox.eventually {
+            await service.settled()
+            rated = try await FolderRemovalTests.ids("rating>=4", service)
+            return rated.count == 1
+        }
+        try #require(rated.count == 1, "the rated photo found once: \(rated)")
         service.close()
 
         let suite = "folder-take-in-\(UUID().uuidString)"
@@ -115,6 +121,7 @@ struct FolderTakeInTests {
             return roots == kept
         }
         #expect(roots == kept, "the index takes Trip in")
+        await relaunched.settled()
         #expect(try await FolderRemovalTests.ids("", relaunched).count == 4)
         #expect(try await FolderRemovalTests.ids("rating>=4", relaunched) == rated)
         #expect(try await FolderRemovalTests.ids("kw:Lisbon", relaunched) == rated)
