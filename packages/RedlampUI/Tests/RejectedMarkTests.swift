@@ -61,7 +61,8 @@ struct RejectedMarkTests {
         let window = NSWindow(
             contentRect: CGRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false,
         )
-        defer { window.contentView = nil }
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
         let container = NSView(frame: CGRect(origin: .zero, size: size))
         container.wantsLayer = true
         container.layer?.backgroundColor = CGColor(gray: 0, alpha: 1)
@@ -137,12 +138,16 @@ struct RejectedMarkTests {
         // Square, so the flag's corner is over the photo rather than the tile beside it.
         let photo = try Self.whitePhoto(height: 300)
         let geometry = GridCellGeometry(size: CGFloat(GridSize.standard), style: .compact)
-        let (kept, rejected) = try (grid(nil, photo, geometry), grid(.reject, photo, geometry))
+        let (kept, picked, rejected) = try (
+            grid(nil, photo, geometry), grid(.pick, photo, geometry), grid(.reject, photo, geometry),
+        )
         let (mark, disc) = (geometry.flag, CGPoint(x: geometry.flag.x, y: geometry.flag.y + 6))
         let middle = CGPoint(x: geometry.image.midX, y: geometry.image.midY)
 
         #expect(rejected.lightness(near: mark) > 0.9, "the X is white, not dimmed with the photo")
         #expect(rejected.lightness(at: disc) < 0.4, "on a dark disc: \(rejected.lightness(at: disc))")
+        #expect(picked.lightness(near: mark) > 0.9 && picked.lightness(at: disc) < 0.4, "a pick's flag on it too")
+        #expect(kept.lightness(at: disc) > 0.9, "a photo with no flag has no disc")
         #expect(
             rejected.lightness(at: middle) < kept.lightness(at: middle) - 0.02,
             "the rejected photo dims: \(rejected.lightness(at: middle)) against \(kept.lightness(at: middle))",
