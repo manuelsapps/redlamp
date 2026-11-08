@@ -20,7 +20,7 @@ public extension FolderLibrary {
             let root = WorkingFolder(path: folder.standardizedFileURL.path)
             let inside = roots.filter { root.contains($0.url) }
             bookmarking[root.id] = inside.flatMap { bookmarking[$0.id] ?? [$0] }
-            added.removeAll { added in inside.contains { $0.id == added.id } }
+            added.removeAll(where: inside.contains)
             takeIn(inside)
             roots.append(root)
             added.append(root)
