@@ -17,15 +17,17 @@ import AppKit
         public let pixelSize: CGSize?
         /// The image is the library's render of the photo's edit.
         public let showsEdit: Bool
-        /// At 1:1: the image is the photo itself.
+        /// At 1:1: the image is at the photo's full size, the photo itself, or with `showsEdit` its edit rendered at
+        /// full size.
         public let showsFullPhoto: Bool
 
         public var description: String {
             func size(_ size: CGSize?) -> String {
                 size.map { "\(Int($0.width.rounded())) × \(Int($0.height.rounded()))" } ?? "none"
             }
+            let full = !showsFullPhoto ? "" : showsEdit ? " at full size" : ", the photo itself"
             return "drawn at \(size(frame.size)) points, the image \(size(image)) pixels, the photo \(size(pixelSize))"
-                + (showsEdit ? ", its edit" : "") + (showsFullPhoto ? ", the photo itself" : "")
+                + (showsEdit ? ", its edit" : "") + full
         }
     }
 

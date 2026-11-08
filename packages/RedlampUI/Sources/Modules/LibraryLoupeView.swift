@@ -9,14 +9,16 @@ import RedlampLibrary
 /// once that's decoded, with its name, date and camera settings above it as an expanded grid cell has
 /// them, and its rating, flag, label and mark beside them as they change (LIB-15). Z, Space or a click
 /// zoom it to 1:1, where the preview shows at the photo's full size until the photo itself is decoded off
-/// the main thread, and a drag pans it; Z or a click fit it again. At Fit the scroll wheel steps to the photo before or
+/// the main thread, or for an edited photo the library renders, until its edit is rendered at full size; a drag
+/// pans it, and Z or a click fit it again. At Fit the scroll wheel steps to the photo before or
 /// after, as ← and → do (`LoupeWheel`). An edited photo shows its edit once the
 /// library has rendered it, and until then its embedded preview, marked in its corner as a grid cell is
-/// (LIB-17). It reads nothing while it isn't shown. LIB-16 adds Compare and Survey. The judging tools (LIB-38)
-/// draw over the photo, their buttons in the caption row; with the following loupe on, the photo itself is decoded
-/// as for 1:1, for the lens to magnify. The caption row also shows the loupe's own Auto Advance, on until it's turned
-/// off there (DEC-68), and turns it on or off. It's drawn on Develop's canvas grey (`PhotoSurround`), its caption row
-/// in the surround's colours (`LibraryLook.surroundTokens`).
+/// (LIB-17); a change to its edit is made again at full size too, the preview shown meanwhile. It reads nothing
+/// while it isn't shown. LIB-16 adds Compare and Survey. The judging tools (LIB-38)
+/// draw over the photo, their buttons in the caption row; with the following loupe on, the photo is made at its full
+/// size as for 1:1, for the lens to magnify. The caption row also shows the loupe's own Auto Advance, on until it's
+/// turned off there (DEC-68), and turns it on or off. It's drawn on Develop's canvas grey (`PhotoSurround`), its
+/// caption row in the surround's colours (`LibraryLook.surroundTokens`).
 final class LibraryLoupeView: NSView, ThemeFollowing {
     private static let inset: CGFloat = 20
     private static let captionHeight: CGFloat = 34
@@ -37,13 +39,15 @@ final class LibraryLoupeView: NSView, ThemeFollowing {
     private var trackers: [Tracker] = []
     private var editObservation: LibraryObservation?
     private var libraryObservation: LibraryObservation?
-    /// The photo shown, a file's own or one of its versions (LIB-48), and whether its preview, and at 1:1 the photo
-    /// itself, are in.
+    /// The photo shown, a file's own or one of its versions (LIB-48), and whether its preview, and at 1:1 the photo at
+    /// its full size, are in: its edit rendered at full size where the library renders it, else the photo itself.
     private var shown: PhotoAddress?
     private(set) var showsPreview = false
     private(set) var showsFullPhoto = false
     /// The edit the image shows, nil for the photo's embedded preview or the photo itself.
     private(set) var shownEdit: EditDigest?
+    /// The edit the photo had when the image at full size being made was asked for.
+    private var loadingEdit: EditDigest?
     /// The photo's size in pixels, from the index or its header, else from the image shown.
     private(set) var pixelSize: CGSize?
     /// At 1:1, the point of the photo at the view's middle, 0 ... 1 across and down.
@@ -159,8 +163,16 @@ final class LibraryLoupeView: NSView, ThemeFollowing {
             Tracker { [weak self] in
                 guard let self else { return }
                 let (selection, active) = (model.selection, model.photoSelection.active)
-                guard model.module == .library, model.libraryView == .loupe else { return }
+                // Away from the loupe, the photo at full size being made stops, leaving Develop's engine to Develop.
+                guard isShownView else {
+                    loading?.cancel()
+                    loading = nil
+                    return
+                }
                 show(Self.shownPhoto(selection, active: active, in: model.library))
+                if wantsFullPhoto, let shown, let item = item(shown) {
+                    loadFullPhoto(item)
+                }
             },
             Tracker { [weak self] in
                 guard let self else { return }
@@ -243,7 +255,17 @@ final class LibraryLoupeView: NSView, ThemeFollowing {
             guard let self, shown == photo else { return }
             showDetails(of: item)
         }
+        showPreview(of: item)
+        if wantsFullPhoto {
+            loadFullPhoto(item)
+        }
+    }
+
+    /// The photo's preview of the edit it shows, from memory at once, else its thumbnail until the preview's decoded.
+    private func showPreview(of item: LibraryItem) {
+        let photo = item.address
         let edit = model.editRenders.shownEdit(for: item)
+        showsPreview = false
         if let preview = model.previews.cachedPreview(photo) {
             setImage(preview.image, edit: preview.edit)
             showsPreview = true
@@ -255,15 +277,21 @@ final class LibraryLoupeView: NSView, ThemeFollowing {
             setImage(thumbnail?.image, edit: thumbnail?.edit)
             if thumbnail.map({ $0.edit != edit }) ?? true {
                 model.thumbnailLoader.request(item) { [weak self] image in
-                    guard let self, shown == photo, !showsPreview, let image else { return }
+                    guard let self, shown == photo, !showsPreview, !showsFullPhoto, let image else { return }
                     setImage(image, edit: edit)
                 }
             }
             requestPreview(of: item)
         }
-        if zoom == .actual || model.libraryJudging.magnification != nil {
-            loadFullPhoto(item)
-        }
+    }
+
+    /// At 1:1, and for the following loupe to magnify, the photo is shown at its full size.
+    private var wantsFullPhoto: Bool {
+        zoom == .actual || model.libraryJudging.magnification != nil
+    }
+
+    private var isShownView: Bool {
+        model.module == .library && model.libraryView == .loupe
     }
 
     private func requestPreview(of item: LibraryItem) {
@@ -281,20 +309,34 @@ final class LibraryLoupeView: NSView, ThemeFollowing {
         badges.metadata = item(shown)?.metadata
     }
 
-    /// The previews of these photos show another edit: the one shown is asked for again.
+    /// The previews of these photos show another edit: the one shown is asked for again. At full size, an image of
+    /// another edit than the photo has now, or of the photo itself once it has one, gives way to the preview and is
+    /// made again while it's wanted and the loupe is shown, never left showing the edit the photo had.
     private func editsShown(_ photos: [PhotoAddress]) {
         guard let shown, photos.contains(shown), let item = item(shown) else { return }
+        let edit = model.editRenders.readEdit(of: item)
+        if loading != nil, loadingEdit != edit {
+            loading?.cancel()
+            loading = nil
+        }
+        guard !showsFullPhoto || shownEdit != edit else { return updateMark() }
         if showsFullPhoto {
-            updateMark()
+            showsFullPhoto = false
+            showPreview(of: item)
         } else {
             requestPreview(of: item)
+        }
+        if wantsFullPhoto, isShownView {
+            loadFullPhoto(item)
         }
     }
 
     private func showDetails(of item: LibraryItem) {
         guard let details = details.details(for: item.url) else { return }
         showCaption(details)
-        if let width = details.width, let height = details.height, width > 0, height > 0, !showsFullPhoto {
+        // The photo itself, decoded, has its own size.
+        if let width = details.width, let height = details.height, width > 0, height > 0,
+           !showsFullPhoto || shownEdit != nil {
             pixelSize = CGSize(width: width, height: height)
             layoutPhoto()
         }
@@ -337,14 +379,18 @@ final class LibraryLoupeView: NSView, ThemeFollowing {
         layoutPhoto()
     }
 
-    /// The photo itself, for 1:1: decoded off the main thread at its full size and drawn there in the
-    /// window's colour space, so the commit that shows it copies it rather than converting it.
+    /// The photo at its full size, for 1:1: its edit rendered at full size where the library renders it, else, or
+    /// where that can't be made, the photo itself, decoded off the main thread. Either is drawn there in the window's
+    /// colour space, so the commit that shows it copies it rather than converting it.
     private func loadFullPhoto(_ item: LibraryItem) {
-        guard loading == nil, item.isLocal else { return }
+        guard loading == nil, !showsFullPhoto, item.isLocal else { return }
         let (engine, scheduler, space) = (model.engine, model.library.scheduler, window?.colorSpace?.cgColorSpace)
         let edge = pixelSize.map { Int(max($0.width, $0.height)) } ?? 1 << 14
         let (url, photo) = (item.url, item.address)
         let originals = model.library.needsDownload(url) ? model.originals : nil
+        let renders = model.editRenders
+        let rendersEdit = renders.renders(item)
+        loadingEdit = renders.readEdit(of: item)
         loading = Task { [weak self] in
             // A photo kept in Apple Photos downloads its original first (LIB-60), its preview shown meanwhile and the
             // download counted in the filmstrip; one that couldn't be had is asked for again at the next zoom.
@@ -354,15 +400,29 @@ final class LibraryLoupeView: NSView, ThemeFollowing {
                 }
                 return
             }
-            let full = try? await scheduler.run(.onScreen) {
-                engine.decodeThumbnail(for: url, maxPixelSize: edge).flatMap { GridThumbnails.drawn($0, in: space) }
+            var full: (image: CGImage, edit: EditDigest?)?
+            if rendersEdit, let rendered = await renders.renderFullSize(item) {
+                let drawn = try? await scheduler.run(.onScreen) { GridThumbnails.drawn(rendered.image, in: space) }
+                if let drawn = drawn ?? nil {
+                    full = (drawn, rendered.edit)
+                }
             }
-            guard let self, shown == photo, !Task.isCancelled, let full = full ?? nil else { return }
-            if pixelSize == nil || CGFloat(full.width) >= (pixelSize?.width ?? 0) {
-                pixelSize = CGSize(width: full.width, height: full.height)
+            if full == nil, !Task.isCancelled {
+                let decoded = try? await scheduler.run(.onScreen) {
+                    engine.decodeThumbnail(for: url, maxPixelSize: edge).flatMap { GridThumbnails.drawn($0, in: space) }
+                }
+                if let decoded = decoded ?? nil {
+                    full = (decoded, nil)
+                }
+            }
+            guard let self, shown == photo, !Task.isCancelled else { return }
+            loading = nil
+            guard let full else { return }
+            if full.edit == nil, pixelSize == nil || CGFloat(full.image.width) >= (pixelSize?.width ?? 0) {
+                pixelSize = CGSize(width: full.image.width, height: full.image.height)
             }
             showsFullPhoto = true
-            setImage(full)
+            setImage(full.image, edit: full.edit)
         }
     }
 
@@ -373,7 +433,7 @@ final class LibraryLoupeView: NSView, ThemeFollowing {
             x: Self.inset, y: Self.captionHeight, width: max(bounds.width - Self.inset * 2, 1),
             height: max(bounds.height - Self.captionHeight - Self.inset, 1),
         )
-        let size = Self.laidOut(pixelSize, image: image) ?? area.size
+        let size = renderedSize ?? Self.laidOut(pixelSize, image: image) ?? area.size
         guard size.width > 0, size.height > 0 else { return }
         let frame: CGRect
         if zoom == .actual {
@@ -400,6 +460,12 @@ final class LibraryLoupeView: NSView, ThemeFollowing {
         updateMark()
         judging.show(shown?.url, edit: shownEdit, pixelSize: pixelSize)
         judging.place(JudgingPlacement(photoFrame: frame, bounds: bounds, scale: window?.backingScaleFactor ?? 2))
+    }
+
+    /// An edit rendered at full size is laid out at its own size: its crop's, not the photo's.
+    private var renderedSize: CGSize? {
+        guard showsFullPhoto, shownEdit != nil, let image else { return nil }
+        return CGSize(width: image.width, height: image.height)
     }
 
     /// The size a photo is laid out at, Compare's and Survey's too: its size in pixels, unless the image shown is
