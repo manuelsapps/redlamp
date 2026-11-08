@@ -397,7 +397,9 @@ final class ComparePhotoView: NSView {
         CATransaction.commit()
         updateOverlays()
         judging.show(url, edit: shownEdit, pixelSize: pixelSize)
-        judging.place(JudgingPlacement(photoFrame: frame, bounds: bounds, scale: window?.backingScaleFactor ?? 2))
+        judging.place(JudgingPlacement(
+            photoFrame: frame, bounds: bounds, scale: window?.backingScaleFactor ?? 2, pixels: size,
+        ))
     }
 
     /// The active photo's outline, around what's seen of it, and the mark of an unedited preview in its corner.

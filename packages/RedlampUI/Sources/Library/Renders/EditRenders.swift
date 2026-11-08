@@ -32,6 +32,8 @@ import RedlampLibrary
 ///   it. The
 ///   engine is let go once the photos it opened would hold more than `engineBudget` on the GPU, and after
 ///   `engineIdle` with nothing to render.
+/// - Full size: the loupe's 1:1 asks for a photo's edit rendered at its full size (`renderFullSize`), which isn't
+///   stored. It takes the place of the render running, and none starts until it ends.
 /// - Versions (LIB-48): a photo is known by its address, a file's own edit or one of its versions, whose edit is the
 ///   version's in the file's sidecar (`Sidecar[edit:]`) and whose render is recorded under its own row. A file's
 ///   photos with the same edit share its render, and the renders of the edits its sidecar holds stay while another
@@ -132,6 +134,9 @@ public final class EditRenders {
     /// The index's records of rendered edits being written, one write after another.
     private var recording: Task<Void, Never>?
     var current: (photo: PhotoAddress, task: Task<Void, Never>)?
+    /// Full-size renders asked for and not yet ended, which no render starts beside, and whether one is running.
+    var fullSizeAsked = 0
+    var fullSizeRunning = false
     var engine: (any EditingEngine)?
     var engineBytes = 0
     var idleRelease: Task<Void, Never>?
@@ -191,6 +196,13 @@ public final class EditRenders {
 
     func shownEdit(at photo: PhotoAddress) -> EditDigest? {
         item(photo).flatMap(shownEdit(for:))
+    }
+
+    /// The edit `item`'s sidecar held when it was last read, rendered or not: nil for none to render, and until it's
+    /// read as the file and sidecar are now.
+    func readEdit(of item: LibraryItem) -> EditDigest? {
+        guard item.hasEdits, let entry = known[item.address], Self.isCurrent(entry, for: item) else { return nil }
+        return entry.digest
     }
 
     /// The row of the photo `photo` names, while the source shows it and it's read.

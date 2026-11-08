@@ -8,9 +8,9 @@
     /// A photo's shape in the Library's loupe, Compare and Survey (#481), on a scratch folder of three JPEGs stored
     /// 1500 by 1000 pixels: one turned upright to portrait by its EXIF orientation, whose size each view reads from its
     /// header, as for a folder the library hasn't indexed yet; then one turned a quarter and one cropped square in
-    /// Develop, shown from the library's renders of their edits.
+    /// Develop, shown from the library's renders of their edits. And a crop at 1:1 in the loupe (J10-2169).
     enum PhotoShapeScenarios {
-        static let all: [Scenario] = [shapes]
+        static let all: [Scenario] = [shapes, zoomedCrop]
 
         /// The photos in the order they were taken, each with the EXIF orientation it's written with.
         private static let photos = [("Portrait.jpg", 6), ("Turned.jpg", 1), ("Square.jpg", 1)]
@@ -84,6 +84,108 @@
                 "Square.jpg": Expected(aspect: 1, edited: true, pixels: stored),
             ])
             app.covered(.feature("library.loupe"), via: .key)
+        }
+
+        /// A photo larger than the store's previews, 4500 by 3000 pixels, so its edit at full size isn't its preview.
+        private static let large = CGSize(width: 4500, height: 3000)
+
+        static let zoomedCrop = Scenario(
+            "library.loupe-zoomed-crop",
+            "A photo cropped in Develop shows its crop in the loupe at 1:1, rendered at full size, and fitted "
+                + "again; cropped again while the loupe is at 1:1, the loupe shows the new crop there at once",
+            claims: [.feature("library.loupe"), .action(.toggleZoom), .action(.cropTool)],
+        ) { app in
+            let scratch = try SourcesScratch(app, photos: [])
+            defer { app.removeScratch(scratch) }
+            let name = "Cropped.jpg"
+            try jpeg(orientation: 1, taken: "2026:11:08 10:00:00", size: large).write(to: scratch.photo(name))
+            try scratch.index(app)
+            try selectAlone(app, name)
+            try app.press(.loupeView)
+            try app.wait("E: the loupe on \(name)") { $0.libraryView == .loupe }
+            try expectActualSize(app, name, large)
+
+            let wide = 16.0 / 9
+            try crop(app, name, .sixteenByNine, ratio: wide)
+            try app.press(.loupeView)
+            try app.wait("E: the loupe on \(name)") { model in
+                model.module == .library && model.libraryView == .loupe && model.selection?.lastPathComponent == name
+            }
+            try expectShape(app, "library.loupe", name, Expected(aspect: wide, edited: true, pixels: large))
+            try app.press(.toggleZoom)
+            try app.wait("Z: 1:1") { $0.libraryViews.loupeZoom == .actual }
+            try expectFullSizeEdit(app, name, aspect: wide, longEdge: large.width)
+            try app.press(.toggleZoom)
+            try app.wait("Z: fit") { $0.libraryViews.loupeZoom == .fit }
+            try expectShape(app, "library.loupe", name, Expected(aspect: wide, edited: true, pixels: large))
+
+            // Cropped again from 1:1: back in the loupe, still at 1:1, the new crop at full size.
+            try app.press(.toggleZoom)
+            try app.wait("Z: 1:1") { $0.libraryViews.loupeZoom == .actual }
+            try expectFullSizeEdit(app, name, aspect: wide, longEdge: large.width)
+            try crop(app, name, .square, ratio: 1)
+            try app.press(.loupeView)
+            try app.wait("E: the loupe on \(name), at 1:1") { model in
+                model.module == .library && model.libraryView == .loupe && model.libraryViews.loupeZoom == .actual
+            }
+            try expectFullSizeEdit(app, name, aspect: 1, longEdge: large.height)
+            try app.press(.toggleZoom)
+            try app.wait("Z: fit") { $0.libraryViews.loupeZoom == .fit }
+            try expectShape(app, "library.loupe", name, Expected(aspect: 1, edited: true, pixels: large))
+            app.covered([.feature("library.loupe"), .action(.toggleZoom)], via: .key)
+            app.covered(.action(.cropTool), via: .key)
+        }
+
+        /// D, R and an aspect in the Crop tool, then D again: `name` cropped to `aspect`, `ratio` wide, in Develop.
+        private static func crop(_ app: RunningApp, _ name: String, _ aspect: CropAspect, ratio: Double) throws {
+            try app.press(.editTool)
+            try app.wait("D: Develop on \(name)") { model in
+                model.module == .develop && model.info?.url.lastPathComponent == name
+            }
+            try app.settle()
+            try app.press(.cropTool)
+            try app.wait("R: the Crop tool") { $0.activeTool == .crop }
+            // A cropped photo's whole frame is laid out again in the Crop tool before its aspect is set.
+            try app.settle()
+            // The Aspect menu is SwiftUI's, which takes no click while the app isn't active.
+            try app.main { $0.setCropAspect(aspect) }
+            do {
+                try app.wait("\(name) cropped \(aspect.title)") { model in
+                    abs(model.pixelAspect(of: model.recipe.crop) - ratio) < 0.01
+                }
+            } catch {
+                let state = try app.main { model in
+                    String(format: "%.3f", model.pixelAspect(of: model.recipe.crop))
+                        + ", the Aspect menu on \(model.cropAspect.title), last step "
+                        + (model.history.last?.title ?? "none")
+                }
+                throw ScenarioFailure("\(error): the crop is \(state)")
+            }
+            try app.press(.editTool)
+            try app.wait("D: the Edit tool") { $0.activeTool == .edit }
+        }
+
+        /// Waits until the loupe shows `name`'s edit at 1:1 rendered at full size, `aspect` wide with `longEdge` pixels
+        /// on
+        /// its long edge, one of them to one of the screen's.
+        private static func expectFullSizeEdit(
+            _ app: RunningApp, _ name: String, aspect: Double, longEdge: CGFloat,
+        ) throws {
+            do {
+                try app.wait("\(name)'s edit at full size at 1:1", timeout: 60) { _ in
+                    guard let shown = shown("library.loupe"), shown.showsFullPhoto, shown.showsEdit,
+                          let image = shown.image, image.width > 0, image.height > 0
+                    else { return false }
+                    let scale = Views.editorWindow?.backingScaleFactor ?? 2
+                    return abs(image.width / image.height / aspect - 1) < 0.02
+                        && abs(max(image.width, image.height) - longEdge) <= 2
+                        && abs(shown.frame.width * scale - image.width) < 1
+                        && abs(shown.frame.height * scale - image.height) < 1
+                }
+            } catch {
+                let state = try app.main { _ in shown("library.loupe").map(String.init(describing:)) ?? "nothing" }
+                throw ScenarioFailure("\(error): the loupe shows \(state)")
+            }
         }
 
         /// Shows each photo in the loupe, then the first beside each of the others in Compare, then all of them in
@@ -204,19 +306,19 @@
             try app.wait("Z: fit") { $0.libraryViews.loupeZoom == .fit }
         }
 
-        /// A JPEG `stored` pixels, with a pale band along its stored top edge so a turn shows, turned by its EXIF
-        /// `orientation` and taken at `taken`.
-        private static func jpeg(orientation: Int, taken: String) throws -> Data {
+        /// A JPEG `size` pixels as stored, with a pale band along its stored top edge so a turn shows, turned by its
+        /// EXIF `orientation` and taken at `taken`.
+        private static func jpeg(orientation: Int, taken: String, size: CGSize = stored) throws -> Data {
             guard let space = CGColorSpace(name: CGColorSpace.sRGB),
                   let context = CGContext(
-                      data: nil, width: Int(stored.width), height: Int(stored.height), bitsPerComponent: 8,
+                      data: nil, width: Int(size.width), height: Int(size.height), bitsPerComponent: 8,
                       bytesPerRow: 0, space: space, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue,
                   )
             else { throw ScenarioFailure("No bitmap context") }
             context.setFillColor(red: 0.35, green: 0.3, blue: 0.25, alpha: 1)
-            context.fill(CGRect(origin: .zero, size: stored))
+            context.fill(CGRect(origin: .zero, size: size))
             context.setFillColor(red: 0.85, green: 0.85, blue: 0.8, alpha: 1)
-            context.fill(CGRect(x: 0, y: stored.height * 0.8, width: stored.width, height: stored.height * 0.2))
+            context.fill(CGRect(x: 0, y: size.height * 0.8, width: size.width, height: size.height * 0.2))
             let data = NSMutableData()
             guard let image = context.makeImage(),
                   let destination = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil)

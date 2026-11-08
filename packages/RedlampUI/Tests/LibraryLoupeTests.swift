@@ -246,6 +246,97 @@ struct LibraryLoupeTests {
         )
     }
 
+    @Test func `an edited photo shows its edit at 1:1 rendered at full size, made again when the edit changes, and fitted again`(
+    ) async throws {
+        let fixture = EditRenderFixture()
+        defer { fixture.cleanUp() }
+        try fixture.photos(["IMG_1.JPG"])
+        try fixture.edit("IMG_1.JPG", exposure: 1)
+        try await fixture.open()
+        let model = try #require(fixture.model)
+        model.showLibrary(.loupe)
+        let loupe = LibraryLoupeView(model: model)
+        fixture.show(loupe)
+        let first = try EditRenderFixture.digest(exposure: 1)
+        try await fixture.eventually { loupe.shownEdit == first }
+        #expect(loupe.shownEdit == first && !loupe.showsFullPhoto, "fitted, the library's render of the edit")
+        let before = fixture.engine.rendered.withLock { $0.count }
+
+        #expect(model.perform(.toggleZoom) && model.libraryViews.loupeZoom == .actual)
+        try await fixture.eventually { loupe.showsFullPhoto }
+        let full = RenderEngine.size
+        #expect(
+            loupe.showsFullPhoto && loupe.shownEdit == first && !loupe.showsUneditedPreview,
+            "the edit, not the photo",
+        )
+        #expect(loupe.image?.width == full.width && EditRenderFixture.isRender(loupe.image, exposure: 1))
+        let asked = fixture.engine.rendered.withLock { $0.dropFirst(before).map(\.maxLongEdge) }
+        #expect(asked == [nil], "rendered at full size: \(asked)")
+        let scale = loupe.window?.backingScaleFactor ?? 2
+        #expect(abs(loupe.photoFrame.width - CGFloat(full.width) / scale) < 0.5, "a pixel of the render to a pixel")
+
+        fixture.engine.gate.hold()
+        try fixture.edit("IMG_1.JPG", exposure: 2, telling: true)
+        try await fixture.eventually { !loupe.showsFullPhoto }
+        #expect(!loupe.showsFullPhoto && loupe.shownEdit != first, "the edit the photo had gives way at once")
+        try await fixture.eventually { fixture.engine.gate.arrived == 1 }
+        fixture.engine.gate.release()
+        let second = try EditRenderFixture.digest(exposure: 2)
+        try await fixture.eventually { loupe.showsFullPhoto && loupe.shownEdit == second }
+        #expect(
+            loupe.showsFullPhoto && loupe.shownEdit == second,
+            "the new edit at full size, without leaving the photo",
+        )
+        #expect(loupe.image?.width == full.width && EditRenderFixture.isRender(loupe.image, exposure: 2))
+
+        let rendered = fixture.engine.rendered.withLock { $0.count }
+        let actual = CGFloat(full.width) / scale
+        #expect(model.perform(.toggleZoom) && model.libraryViews.loupeZoom == .fit)
+        try await fixture.eventually { loupe.photoFrame.width < actual - 1 }
+        #expect(
+            loupe.shownEdit == second && EditRenderFixture.isRender(loupe.image, exposure: 2),
+            "fitted, still the edit",
+        )
+        #expect(model.perform(.toggleZoom) && model.libraryViews.loupeZoom == .actual)
+        try await fixture.eventually { abs(loupe.photoFrame.width - actual) < 0.5 }
+        #expect(loupe.showsFullPhoto && loupe.shownEdit == second, "and at 1:1 again at once")
+        #expect(fixture.engine.rendered.withLock { $0.count } == rendered, "without rendering it again")
+    }
+
+    @Test func `the following loupe magnifies an edit rendered at full size at its own size, not the photo's`(
+    ) async throws {
+        let fixture = EditRenderFixture()
+        defer { fixture.cleanUp() }
+        try fixture.photos(["IMG_1.JPG"])
+        try fixture.edit("IMG_1.JPG", exposure: 1)
+        try await fixture.open()
+        let model = try #require(fixture.model)
+        model.showLibrary(.loupe)
+        let loupe = LibraryLoupeView(model: model)
+        loupe.frame = CGRect(x: 0, y: 0, width: 800, height: 600)
+        fixture.show(loupe)
+        let edit = try EditRenderFixture.digest(exposure: 1)
+        model.setFollowingLoupe(.double)
+        try await fixture.eventually { loupe.showsFullPhoto && loupe.shownEdit == edit }
+        // The render, 3000 by 2000 pixels, stands in for an edit's crop of the 96 by 64 pixel photo.
+        let image = try #require(loupe.image)
+        let frame = loupe.photoFrame
+        let event = try #require(NSEvent.mouseEvent(
+            with: .mouseMoved, location: loupe.convert(CGPoint(x: frame.midX, y: frame.midY), to: nil),
+            modifierFlags: [], timestamp: 0, windowNumber: loupe.window?.windowNumber ?? 0, context: nil,
+            eventNumber: 0, clickCount: 0, pressure: 0,
+        ))
+        loupe.mouseMoved(with: event)
+        let lens = loupe.judging.lens
+        let scale = loupe.window?.backingScaleFactor ?? 2
+        #expect(lens.isShown)
+        #expect(
+            abs(lens.magnified.width - CGFloat(image.width) * 2 / scale) < 1
+                && abs(lens.magnified.height - CGFloat(image.height) * 2 / scale) < 1,
+            "two of the screen's pixels to one of the edit's: \(lens.magnified)",
+        )
+    }
+
     @Test func `a photo is laid out at its size, or in the shape of an image an edit crops or turns, at its long edge`(
     ) throws {
         let photo = CGSize(width: 1200, height: 800)
