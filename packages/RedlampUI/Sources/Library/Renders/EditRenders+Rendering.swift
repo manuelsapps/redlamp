@@ -8,7 +8,7 @@ import RedlampRecipes
 extension EditRenders {
     /// Starts rendering the next photo that needs it, `focus`'s rows first, unless one is rendering.
     func renderNext(_ focus: [Int]) {
-        guard current == nil else { return }
+        guard current == nil, fullSizeAsked == 0 else { return }
         if engineBytes > Self.engineBudget {
             releaseEngine()
         }
@@ -116,11 +116,68 @@ extension EditRenders {
         return (image, info.pixelSize.width * info.pixelSize.height, Self.seconds(.now - rendering))
     }
 
-    /// What a render of `recipe` asks the engine with `info` open for.
-    private static func stillRequest(_ recipe: EditRecipe, _ info: ImageInfo) -> StillRequest {
+    /// `item`'s edit rendered at the photo's full size, for the loupe's 1:1, and the digest of the edit rendered. Its
+    /// sidecar is read again, as for a render, and the edit rendered in Develop's engine while Develop keeps the photo
+    /// open behind Library, else in the renders' own; nothing is stored. A render running for another photo stops
+    /// first, one of this photo is waited for, as is another full-size render, and none starts until this one ends.
+    /// Nil when the edit can't be rendered, or the task is cancelled.
+    func renderFullSize(_ item: LibraryItem) async -> (image: CGImage, edit: EditDigest)? {
+        guard renders(item), isWindowOpen, makeEngine != nil else { return nil }
+        let (url, photo) = (item.url, item.address)
+        fullSizeAsked += 1
+        defer {
+            fullSizeAsked -= 1
+            schedulePump()
+        }
+        while fullSizeRunning || current != nil {
+            if let current, current.photo != photo {
+                current.task.cancel()
+            }
+            guard !Task.isCancelled else { return nil }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        fullSizeRunning = true
+        defer { fullSizeRunning = false }
+        let sidecars = library.sidecars
+        let loaded = try? await scheduler.run(.onScreen) {
+            sidecars.store(for: url).load(for: url)?[edit: photo.version]?.recipe
+        }
+        guard !Task.isCancelled, let recipe = loaded ?? nil, !recipe.isPristine, !recipe.requiresNewerProcess,
+              let digest = EditDigest(rendering: recipe)
+        else { return nil }
+        if let editor, let info = editor.info, info.url == url, editor.opening == nil,
+           editor.openVersion == photo.version, editor.engine.canRender(recipe.baseLook),
+           let image = try? await editor.engine.renderStill(Self.stillRequest(recipe, info, maxLongEdge: nil)) {
+            return Task.isCancelled ? nil : (image, digest)
+        }
+        guard !Task.isCancelled, let engine = await workerEngine() else { return nil }
+        idleRelease?.cancel()
+        idleRelease = nil
+        stepRunning = true
+        engine.expect(recipe.rawRevision, for: url)
+        let opened = try? await engine.open(url)
+        stepRunning = false
+        guard !Task.isCancelled, let info = opened else { return nil }
+        engineBytes += info.pixelSize.width * info.pixelSize.height * 32 / 3
+        if !engine.canRender(recipe.baseLook), let look = editor?.recipes.library.definition(for: recipe.baseLook) {
+            engine.registerBaseLook(look)
+        }
+        guard engine.canRender(recipe.baseLook) else { return nil }
+        stepRunning = true
+        let rendered = try? await engine.renderStill(Self.stillRequest(recipe, info, maxLongEdge: nil))
+        stepRunning = false
+        guard !Task.isCancelled, let rendered else { return nil }
+        return (rendered, digest)
+    }
+
+    /// What a render of `recipe` asks the engine with `info` open for: at the preview tier's size, or at `maxLongEdge`,
+    /// nil for the photo's full size.
+    private static func stillRequest(
+        _ recipe: EditRecipe, _ info: ImageInfo, maxLongEdge: Int? = PhotoStore.Tier.preview.pixelSize,
+    ) -> StillRequest {
         var request = StillRequest(
-            recipe: EditorModel.asShot(recipe, info), maxLongEdge: PhotoStore.Tier.preview.pixelSize,
-            colorSpace: .displayP3, purpose: .preview,
+            recipe: EditorModel.asShot(recipe, info), maxLongEdge: maxLongEdge, colorSpace: .displayP3,
+            purpose: .preview,
         )
         request.source = info.url
         return request
