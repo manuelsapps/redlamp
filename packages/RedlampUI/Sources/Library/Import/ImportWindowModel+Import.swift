@@ -13,6 +13,9 @@ extension ImportWindowModel {
         if phase == .planning || phase == .copying {
             return "An import is running."
         }
+        if phase == .adding {
+            return "The import is adding its photos to the library."
+        }
         if phase == .rollingBack {
             return "An import is being rolled back."
         }
@@ -172,8 +175,22 @@ extension ImportWindowModel {
         await importing?.value
     }
 
+    /// The importer's progress; once every photo is copied, the window says they're being added to the library,
+    /// and shows those placed as copied, so the next can be chosen meanwhile.
     func progressed(_ progress: ImportProgress) {
-        guard phase == .copying else { return }
+        guard phase == .copying || phase == .adding else { return }
+        let adding = progress.adding != nil
+        if adding, phase == .copying, let plan {
+            let destinationFileSystem = destinationFileSystem
+            Task { [weak self] in
+                let placed = await Self.placed(plan, failed: [], on: destinationFileSystem)
+                guard let self, phase == .adding else { return }
+                copied.formUnion(placed.map(\.0))
+                notify(.status)
+                notify(.photos(ids: nil))
+            }
+        }
+        phase = adding ? .adding : .copying
         self.progress = progress
         for index in sources.indices {
             sources[index].progress = progress.sources[sources[index].id]
@@ -230,6 +247,7 @@ extension ImportWindowModel {
             let latest = ImportLatest<ImportProgress>()
             let interval = Self.progressInterval
             do {
+                plan = try? await importer.plan(of: entry.id)
                 let outcomes = try await importer.recover { [weak self] progress in
                     guard latest.set(progress) else { return }
                     Task { @MainActor [weak self] in
@@ -365,7 +383,8 @@ extension ImportWindowModel {
         let roots = [settings.destination] + (settings.backup.map { [$0] } ?? [])
         let verified = progress?.done ?? outcome?.verified
         let total = progress?.photos ?? outcome?.photos
-        guard let verified, let total, phase == .copying || phase == .finished, rollback == nil else { return [] }
+        guard let verified, let total, phase == .copying || phase == .adding || phase == .finished, rollback == nil
+        else { return [] }
         return roots.map { "\($0.lastPathComponent): \(verified) of \(Self.count(total, "photo")) verified" }
     }
 }

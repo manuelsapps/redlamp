@@ -99,6 +99,24 @@ struct ImportCopyTests {
         #expect(ImportSandbox.leftovers(in: sandbox.destination).isEmpty)
     }
 
+    @Test func `once every photo is copied, the run reports adding them to the library until the last is in`(
+    ) async throws {
+        let sandbox = try await ImportSandbox.make()
+        defer { sandbox.remove() }
+        let source = try sandbox.card("CARD", Self.jpegs(5))
+        let session = sandbox.session([source], previews: false)
+        let plan = try await session.plan(sandbox.settings())
+        let reports = Mutex<[ImportProgress]>([])
+        let outcome = try await session.importer().run(plan) { progress in reports.withLock { $0.append(progress) } }
+        let progress = reports.withLock { $0 }
+        let copying = try #require(progress.firstIndex { $0.adding != nil })
+        #expect(progress[..<copying].allSatisfy { $0.adding == nil }, "nothing's added while photos are copying")
+        #expect(progress[copying].done == 5 && progress[copying].adding?.photos == 5)
+        #expect(progress[copying...].allSatisfy { $0.done == 5 && $0.adding != nil })
+        #expect(progress.last?.adding == ImportProgress.Adding(photos: 5, done: 5))
+        #expect(outcome.indexed == 5 && outcome.state == .finished)
+    }
+
     @Test func `the choices made while browsing are written at the destination, and the library hears of them`(
     ) async throws {
         let sandbox = try await ImportSandbox.make()

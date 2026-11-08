@@ -301,6 +301,37 @@ extension ImportWindowTests {
         #expect(controller.importButton.keyEquivalent == "\r" && controller.resumeButton.isHidden)
     }
 
+    @Test func `while the photos copied are added to the library the window says so, with nothing to cancel, and the next are chosen meanwhile`(
+    ) async throws {
+        let fixture = try await ImportWindowFixture.make()
+        defer { fixture.remove() }
+        let model = fixture.model()
+        let controller = ImportWindowController(model: model)
+        defer { controller.window?.orderOut(nil) }
+        try await model.addFolder(fixture.folder("Card", count: 6))
+        await model.browsed()
+        fixture.settle(model)
+        let names = Dictionary(model.photos.map { ($0.primary.name, $0.id) }) { first, _ in first }
+        let later = try (3 ..< 6).map { try #require(names[ImportWindowFixture.name($0)]) }
+        model.choose(later, false)
+        model.importer.holdsAdding.withLock { $0 = true }
+        model.startImport()
+        try await waitUntil("the photos being added to the library") { model.phase == .adding }
+        #expect(model.summary == "Adding 3 photos to the library… 0 of 3")
+        #expect(model.isBusy && !model.canCancel && controller.cancelButton.isHidden)
+        #expect(model.importBlocker == "The import is adding its photos to the library.")
+        #expect(model.detail(of: model.sources[0]) == "Copied 3 of 3; adding them to the library…")
+        #expect(model.destinationLines == ["Pictures: 3 of 3 photos verified", "Backup: 3 of 3 photos verified"])
+        try await waitUntil("the photos copied shown so") { model.copied.count == 3 }
+        model.choose(later, true)
+        #expect(model.chosen.photos == 3, "the next photos chosen meanwhile")
+
+        model.importer.holdsAdding.withLock { $0 = false }
+        await model.imported()
+        #expect(model.phase == .finished && model.outcome?.indexed == 3 && model.failure == nil)
+        #expect(model.chosen.photos == 3 && model.importBlocker == nil && controller.importButton.isEnabled)
+    }
+
     @Test func `a card inserted opens the import window on it while Settings says so`() async throws {
         let fixture = try await ImportWindowFixture.make()
         defer { fixture.remove() }

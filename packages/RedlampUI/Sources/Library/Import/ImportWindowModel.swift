@@ -17,9 +17,13 @@ import Synchronization
 ///   (`ImportPreferences`).
 /// - **Import:** the photos of every source included, planned together so collisions are numbered in
 ///   capture order across them, and copied by one journaled `Importer` run off the main thread, with
-///   each source's part as it goes; Cancel stops it once the photos being copied are done. A run a
-///   forced quit cut short waits to be resumed. At the end each card says whether it's safe to erase,
-///   and the photos copied are shown in Library, selected, after a Resume as after a run straight through.
+///   each source's part as it goes; Cancel stops it once the photos being copied are done. Once every
+///   photo is copied, the window says so as the run adds them to the library, with nothing to cancel,
+///   and the next can be chosen meanwhile. A run a
+///   forced quit cut short waits to be resumed, and so does one an error such as a full disk stops
+///   partway, offered at once with the photos it placed shown as copied. At the end each card says
+///   whether it's safe to erase, which it is once every photo on it is in the library, and the photos
+///   copied are shown in Library, selected, after a Resume as after a run straight through.
 /// - **Roll Back:** an import cancelled here, or one a forced quit cut short, is taken back whole
 ///   (`Importer.rollBack`): its copies to the Trash, its photos out of the library, the folders it made
 ///   removed. A rollback stopped or cut short waits, and Resume finishes it.
@@ -63,6 +67,9 @@ final class ImportWindowModel {
         case choosing
         case planning
         case copying
+        /// Every photo is copied or failed, and those copied are being added to the library: there's nothing
+        /// to cancel, and the next photos can be chosen meanwhile, but not imported.
+        case adding
         case rollingBack
         /// The import or the rollback is over, or stopped; `outcome` and `rollback` say what they did.
         case finished
@@ -211,9 +218,14 @@ final class ImportWindowModel {
         }
     }
 
-    /// An import is being planned or copied, or rolled back.
+    /// An import is being planned, copied or added to the library, or rolled back.
     var isBusy: Bool {
-        phase == .planning || phase == .copying || phase == .rollingBack
+        phase == .planning || phase == .copying || phase == .adding || phase == .rollingBack
+    }
+
+    /// Cancel is offered: not once every photo is copied.
+    var canCancel: Bool {
+        isBusy && phase != .adding
     }
 
     /// Stops browsing and lets the sessions go, unless an import is copying or rolling back, which carries on.
@@ -626,6 +638,10 @@ extension ImportWindowModel {
             return "Copied and verified \(progress.done) of \(Self.count(progress.photos, "photo")), "
                 + "\(ImportFormat.size(progress.copied)) of \(ImportFormat.size(progress.bytes))"
                 + (progress.failed > 0 ? "; \(progress.failed) couldn't be copied" : "") + "."
+        case .adding:
+            guard let adding = progress?.adding else { return "Adding the photos to the library…" }
+            return "Adding \(Self.count(adding.photos, "photo")) to the library… \(adding.done.formatted()) of "
+                + adding.photos.formatted()
         case .rollingBack:
             guard let rollbackProgress else { return "Rolling back…" }
             return "Moving the copies to the Trash: \(rollbackProgress.done) of "
@@ -662,8 +678,9 @@ extension ImportWindowModel {
                 : "Not safe to erase: \(Self.count(waiting, "photo")) not imported yet."
         }
         if let progress = source.progress {
-            return "Copying: \(progress.done) of \(progress.photos)"
-                + (progress.failed > 0 ? ", \(progress.failed) failed" : "")
+            let failed = progress.failed > 0 ? ", \(progress.failed) failed" : ""
+            return phase == .adding ? "Copied \(progress.done) of \(progress.photos)\(failed); adding them to the library…"
+                : "Copying: \(progress.done) of \(progress.photos)\(failed)"
         }
         if let problem = source.problem {
             return source.isEjected ? "Ejected." : problem

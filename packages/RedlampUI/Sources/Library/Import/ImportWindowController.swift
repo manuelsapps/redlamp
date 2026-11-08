@@ -181,10 +181,10 @@ public final class ImportWindowController: NSWindowController, NSWindowDelegate 
         let blocker = model.importBlocker
         importButton.isEnabled = blocker == nil
         importButton.toolTip = blocker
-        cancelButton.isHidden = !model.isBusy
         let resumes = !model.interrupted.isEmpty && !model.isBusy
         importButton.isHidden = resumes
         importButton.keyEquivalent = resumes ? "" : "\r"
+        cancelButton.isHidden = !model.canCancel
         cancelButton.title = model.phase == .rollingBack ? "Stop Rolling Back" : "Cancel Import"
         resumeButton.isHidden = !resumes
         resumeButton.keyEquivalent = resumes ? "\r" : ""
@@ -192,6 +192,9 @@ public final class ImportWindowController: NSWindowController, NSWindowDelegate 
         if model.phase == .copying, let progress = model.progress, progress.photos > 0 {
             self.progress.isHidden = false
             self.progress.doubleValue = Double(progress.done + progress.failed) / Double(progress.photos)
+        } else if model.phase == .adding, let adding = model.progress?.adding, adding.photos > 0 {
+            progress.isHidden = false
+            progress.doubleValue = Double(adding.done) / Double(adding.photos)
         } else if model.phase == .rollingBack, let progress = model.rollbackProgress, progress.photos > 0 {
             self.progress.isHidden = false
             self.progress.doubleValue = Double(progress.done) / Double(progress.photos)
