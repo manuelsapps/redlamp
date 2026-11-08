@@ -143,6 +143,13 @@
             )
             defer {
                 app.removeCollectionsMade()
+                // The shoots are roots of their own until the folder holding them takes them in.
+                let inside = scratch.folder.standardizedFileURL.path + "/"
+                try? app.main { model in
+                    for root in model.library.roots where root.path.hasPrefix(inside) {
+                        model.library.remove(root)
+                    }
+                }
                 scratch.remove(app)
             }
             let year = scratch.folder
