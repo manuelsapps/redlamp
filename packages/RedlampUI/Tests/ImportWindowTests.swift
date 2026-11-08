@@ -468,6 +468,8 @@ extension ImportWindowTests {
         let controller = ImportWindowController(model: fixture.model())
         defer { controller.close() }
         let window = try #require(controller.window)
+        // The sizes set here aren't kept for the next window, as the app keeps a person's.
+        window.setFrameAutosaveName("")
         let content = try #require(window.contentView)
         let summary = try #require(ApplePhotosWindowTests.view("import.summary", in: content))
         let importButton = try #require(ApplePhotosWindowTests.button("import.import", in: content))
