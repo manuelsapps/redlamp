@@ -108,6 +108,9 @@ public final class Importer: Sendable {
         case beforePlacing(Int)
         /// A rollback, once this many photos' files are in the Trash, before they're logged taken back.
         case afterTakingBack(Int)
+        /// Once this many photos are done, the Mac's disk full: the run throws `ENOSPC`, as its journal's next
+        /// write would, leaving the journal as it is. Once spent, the disk has space again.
+        case diskFull(afterPhotos: Int)
     }
 
     struct ForcedQuit: Error {}
@@ -182,6 +185,12 @@ public final class Importer: Sendable {
     /// way to leave an import to be resumed or rolled back.
     @_spi(Harness) public func simulateForcedQuit(afterPhotos photos: Int) {
         interruption.withLock { $0 = .afterPhotos(photos) }
+    }
+
+    /// Fills the Mac's disk once `photos` photos of the next run are done: the run stops with `ENOSPC`, its
+    /// import left to be resumed or rolled back, and the disk has space again for the run after.
+    @_spi(Harness) public func simulateFullDisk(afterPhotos photos: Int) {
+        interruption.withLock { $0 = .diskFull(afterPhotos: photos) }
     }
 
     /// The folders `plan` would make on `fileSystem`, parents first: the destination and the backup, the
@@ -353,6 +362,17 @@ public final class Importer: Sendable {
                                        run.counts.settled >= count {
                                         quitting.set()
                                         throw ForcedQuit()
+                                    }
+                                    let settled = run.counts.settled
+                                    if self.interruption.withLock({ interruption in
+                                        guard case let .diskFull(count) = interruption, settled >= count else {
+                                            return false
+                                        }
+                                        interruption = nil
+                                        return true
+                                    }) {
+                                        cancelled.set()
+                                        throw POSIXError(.ENOSPC)
                                     }
                                 }
                             }
