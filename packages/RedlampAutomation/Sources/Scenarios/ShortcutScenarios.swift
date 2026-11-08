@@ -416,7 +416,10 @@
             let scratch = try SourcesScratch(app, photos: ["A.jpg", "B.jpg", "C.jpg", "D.jpg"])
             let depth = try app.main { $0.cullingUndoCount }
             defer {
-                try? app.main { $0.closeCommandPalette() }
+                try? app.main { model in
+                    model.closeCommandPalette()
+                    model.showModule(.develop)
+                }
                 try? app.takeBackCulling(to: depth)
                 app.removeScratch(scratch)
             }
