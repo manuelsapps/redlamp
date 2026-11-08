@@ -1,8 +1,8 @@
 import AppKit
 
-/// A text field that wraps onto more lines, up to `lines`, when its text doesn't fit on one, as it's typed too: the
-/// import window's To column is narrow, and a long template scrolled out of sight in a field of one line (J10-2165).
-/// At one line it's a field as AppKit has it, its text scrolling.
+/// A text field that wraps onto more lines, up to `lines`, when its text doesn't fit on one, as it's typed too. AppKit
+/// keeps a bezeled field one line high whatever its text, so the field measures its own height. At one line it's a
+/// field as AppKit has it, its text scrolling.
 final class GrowingTextField: NSTextField {
     /// The lines the field grows to as its text needs them.
     var lines = 1 {
