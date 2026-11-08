@@ -268,6 +268,39 @@ extension ImportWindowTests {
         #expect(ImportWindowFixture.leftovers(in: fixture.destination).isEmpty)
     }
 
+    @Test func `the button reads Import after an import, and Resume takes its place while an import cut short waits`(
+    ) async throws {
+        let fixture = try await ImportWindowFixture.make()
+        defer { fixture.remove() }
+        let model = fixture.model()
+        let controller = ImportWindowController(model: model)
+        defer { controller.window?.orderOut(nil) }
+        try await model.addFolder(fixture.folder("Card", count: 8))
+        await model.browsed()
+        fixture.settle(model)
+        let names = Dictionary(model.photos.map { ($0.primary.name, $0.id) }) { first, _ in first }
+        let later = try (2 ..< 8).map { try #require(names[ImportWindowFixture.name($0)]) }
+        model.choose(later, false)
+        model.startImport()
+        await model.imported()
+        #expect(model.outcome?.verified == 2 && model.phase == .finished)
+        #expect(controller.importButton.title == "Import" && !controller.importButton.isHidden)
+        #expect(controller.importButton.keyEquivalent == "\r" && controller.resumeButton.isHidden)
+
+        model.choose(later, true)
+        model.importer.interruption.withLock { $0 = .diskFull(afterPhotos: 1) }
+        model.startImport()
+        await model.imported()
+        #expect(!model.interrupted.isEmpty && controller.importButton.isHidden && !controller.resumeButton.isHidden)
+        #expect(controller.resumeButton.keyEquivalent == "\r" && controller.importButton.keyEquivalent.isEmpty)
+
+        controller.resumeButton.performClick(nil)
+        await model.imported()
+        #expect(model.interrupted.isEmpty && model.outcome?.state == .finished)
+        #expect(controller.importButton.title == "Import" && !controller.importButton.isHidden)
+        #expect(controller.importButton.keyEquivalent == "\r" && controller.resumeButton.isHidden)
+    }
+
     @Test func `a card inserted opens the import window on it while Settings says so`() async throws {
         let fixture = try await ImportWindowFixture.make()
         defer { fixture.remove() }

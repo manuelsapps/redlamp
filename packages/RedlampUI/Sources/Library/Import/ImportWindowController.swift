@@ -3,8 +3,9 @@ import RedlampLibrary
 
 /// File › Import Photos… (LIB-27): a window of its own in three columns, From, the photos and To (see
 /// `ImportWindowModel`), and below them what's chosen and how the import is going, with Import, Cancel,
-/// Resume and Roll Back. There's one at a time: asking again brings it forward. Closing it while it copies
-/// or rolls back lets that carry on, and asking again shows it; closed otherwise, it lets its sources go.
+/// Resume, in Import's place while an import or a rollback cut short waits, and Roll Back. There's one at a
+/// time: asking again brings it forward. Closing it while it copies or rolls back lets that carry on, and
+/// asking again shows it; closed otherwise, it lets its sources go.
 @MainActor
 public final class ImportWindowController: NSWindowController, NSWindowDelegate {
     public nonisolated static let title = "Import Photos"
@@ -22,9 +23,10 @@ public final class ImportWindowController: NSWindowController, NSWindowDelegate 
     let grid: ImportGridViewController
     let destinationView: ImportDestinationViewController
     private let status = NSTextField(wrappingLabelWithString: "")
-    private let importButton = NSButton(title: "Import", target: nil, action: nil)
-    private let cancelButton = NSButton(title: "Cancel Import", target: nil, action: nil)
-    private let resumeButton = NSButton(title: "Resume", target: nil, action: nil)
+    let importButton = NSButton(title: "Import", target: nil, action: nil)
+    let cancelButton = NSButton(title: "Cancel Import", target: nil, action: nil)
+    /// In Import's place while an import or a rollback cut short waits.
+    let resumeButton = NSButton(title: "Resume", target: nil, action: nil)
     private let rollBackButton = NSButton(title: "Roll Back", target: nil, action: nil)
     private let progress = NSProgressIndicator()
 
@@ -179,10 +181,13 @@ public final class ImportWindowController: NSWindowController, NSWindowDelegate 
         let blocker = model.importBlocker
         importButton.isEnabled = blocker == nil
         importButton.toolTip = blocker
-        importButton.title = model.phase == .finished ? "Import Again" : "Import"
         cancelButton.isHidden = !model.isBusy
+        let resumes = !model.interrupted.isEmpty && !model.isBusy
+        importButton.isHidden = resumes
+        importButton.keyEquivalent = resumes ? "" : "\r"
         cancelButton.title = model.phase == .rollingBack ? "Stop Rolling Back" : "Cancel Import"
-        resumeButton.isHidden = model.interrupted.isEmpty || model.isBusy
+        resumeButton.isHidden = !resumes
+        resumeButton.keyEquivalent = resumes ? "\r" : ""
         rollBackButton.isHidden = model.rollBackTarget == nil || model.isBusy
         if model.phase == .copying, let progress = model.progress, progress.photos > 0 {
             self.progress.isHidden = false
