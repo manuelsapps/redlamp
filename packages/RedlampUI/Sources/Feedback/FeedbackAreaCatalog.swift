@@ -313,7 +313,7 @@ public extension FeedbackArea {
                 FeedbackFeature(
                     "folders",
                     "Folders Panel",
-                    ["add folder", "remove folder", "locate", "missing folder"],
+                    ["add folder", "remove folder", "locate", "missing folder", "sort folders", "newest first"],
                 ),
                 FeedbackFeature("subfolders", "Show Photos in Subfolders", ["subfolders", "nested"]),
                 FeedbackFeature(

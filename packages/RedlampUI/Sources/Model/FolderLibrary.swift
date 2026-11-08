@@ -96,6 +96,10 @@ public final class FolderLibrary {
     public internal(set) var openFolder: URL?
     /// Show Photos in Subfolders: on, as in Lightroom Classic, unless the user turned it off.
     public internal(set) var includesSubfolders = true
+    /// Sort Folders Newest First: the Folders panel lists the roots and each folder's subfolders by name, last first,
+    /// so folders named by date show the newest at the top. Off, roots are in the order they were added and
+    /// subfolders in Finder's order.
+    public internal(set) var sortsNewestFirst = false
     /// The folder tree's expanded rows (paths). Not observed, like `tree`: the Folders panel
     /// changes only the rows a change touches.
     @ObservationIgnored public internal(set) var expandedFolders: Set<String> = []
@@ -442,6 +446,13 @@ public final class FolderLibrary {
         if let openFolder {
             open(openFolder, opened: opened)
         }
+    }
+
+    /// Lists the Folders panel's folders newest first, or as they were: the user's choice, kept across launches.
+    public func setSortsNewestFirst(_ newestFirst: Bool) {
+        guard newestFirst != sortsNewestFirst else { return }
+        sortsNewestFirst = newestFirst
+        defaults?.set(newestFirst, forKey: Key.newestFirst)
     }
 
     func replace(with items: [LibraryItem]) {

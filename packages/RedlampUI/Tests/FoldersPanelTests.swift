@@ -4,8 +4,8 @@ import RedlampDocument
 import Testing
 @testable import RedlampUI
 
-/// The Folders panel: roots with counts, subfolders listed as they open, missing roots, and rows
-/// made only for what's on screen.
+/// The Folders panel: roots with counts, subfolders listed as they open, missing roots, their order newest first,
+/// and rows made only for what's on screen.
 @MainActor
 struct FoldersPanelTests {
     private let root = FileManager.default.temporaryDirectory.appending(path: "panel-\(UUID().uuidString)")
@@ -182,6 +182,75 @@ struct FoldersPanelTests {
     }
 
     /// Big, a root of five thousand empty subfolders, open in the panel.
+    @Test func `Sort Folders Newest First lists the roots and their subfolders by name, last first`() async throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        try photos([
+            "2025/a.ARW", "2026/2026-08-16_birthday/a.ARW", "2026/2026-08-21_Milanga/b.ARW",
+            "2026/2026-08-27_Spider/c.ARW",
+        ])
+        let (year, before) = (root.appending(path: "2026"), root.appending(path: "2025"))
+        let model = EditorModel(engine: StubEngine())
+        model.open([before, year])
+        model.library.setExpanded(year, true)
+        let (list, window) = showPanel(model)
+        defer { window.contentView = nil }
+        let added = ["2025", "2026", "2026-08-16_birthday", "2026-08-21_Milanga", "2026-08-27_Spider"]
+        try await eventually { rows(list.folders).map(\.name) == added }
+        #expect(rows(list.folders).map(\.name) == added, "roots in the order they were added, subfolders in Finder's")
+        #expect(MenuBarState.isOn(.sortFoldersNewestFirst, in: model) == false)
+
+        model.perform(.sortFoldersNewestFirst)
+        let newest = ["2026", "2026-08-27_Spider", "2026-08-21_Milanga", "2026-08-16_birthday", "2025"]
+        try await eventually { rows(list.folders).map(\.name) == newest }
+        #expect(rows(list.folders).map(\.name) == newest, "the open folder stays open")
+        #expect(MenuBarState.isOn(.sortFoldersNewestFirst, in: model) == true)
+
+        model.perform(.sortFoldersNewestFirst)
+        try await eventually { rows(list.folders).map(\.name) == added }
+        #expect(rows(list.folders).map(\.name) == added)
+    }
+
+    @Test func `Sort Folders Newest First is kept across launches`() throws {
+        let suite = "folders-newest-first-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let library = FolderLibrary(defaults: defaults)
+        #expect(!library.sortsNewestFirst, "off until it's chosen")
+
+        library.setSortsNewestFirst(true)
+        #expect(FolderLibrary(defaults: defaults).sortsNewestFirst)
+        library.setSortsNewestFirst(false)
+        #expect(!FolderLibrary(defaults: defaults).sortsNewestFirst)
+    }
+
+    @Test func `the Folders header's menu and a folder's menu choose Sort Folders Newest First, checked while it's on`(
+    ) throws {
+        let model = EditorModel(engine: StubEngine())
+        let section = SourcePanels.folders(model: model)
+        let folder = WorkingFolder(path: root.path)
+        let row = FolderRow(
+            url: folder.url, name: folder.name, root: folder, count: 1, hasSubfolders: false, isMissing: false,
+            isOpen: false, isSelectable: true,
+        )
+        let title = ShortcutAction.sortFoldersNewestFirst.title
+        func header() -> NSMenuItem? {
+            section.header.menuProvider?().items.first { $0.title == title }
+        }
+        func folderItem() -> NSMenuItem? {
+            SidebarCellView.folderMenu(row, model: model, anchor: section).items.first { $0.title == title }
+        }
+        #expect(header()?.state == .off && folderItem()?.state == .off)
+
+        let chosen = try #require(header())
+        try NSApplication.shared.sendAction(#require(chosen.action), to: chosen.target, from: chosen)
+        #expect(model.library.sortsNewestFirst)
+        #expect(header()?.state == .on && folderItem()?.state == .on)
+
+        let fromFolder = try #require(folderItem())
+        try NSApplication.shared.sendAction(#require(fromFolder.action), to: fromFolder.target, from: fromFolder)
+        #expect(!model.library.sortsNewestFirst)
+    }
+
     private func showBig() async throws -> (EditorModel, SidebarListView, NSWindow) {
         try FileManager.default.createDirectory(at: root.appending(path: "Big"), withIntermediateDirectories: true)
         for index in 0 ..< 5000 {

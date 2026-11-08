@@ -6,9 +6,10 @@
     import Synchronization
 
     /// The sources the Folders panel chooses: folders counted with their subfolders' photos, and a folder of
-    /// folders showing every photo beneath it (LIB-10); and Recently Trashed, with Put Back (LIB-26).
+    /// folders showing every photo beneath it (LIB-10); their order, newest first; and Recently Trashed, with Put
+    /// Back (LIB-26).
     enum SourceScenarios {
-        static let all: [Scenario] = [subfolders, recentlyTrashed, folderCounts]
+        static let all: [Scenario] = [subfolders, newestFirst, recentlyTrashed, folderCounts]
 
         /// Photos a batch of the library's moved to the Trash: Recently Trashed from the palette, the photos put
         /// back from the grid's menu, by ⌘⌫, from the Photo menu and the palette, Develop off for them, the
@@ -261,6 +262,77 @@
             try app.main { $0.showFolder(folders) }
             try app.wait("the photos folder again", timeout: 20) { $0.folder == folders && !$0.library.isListing }
             try app.openWorking()
+        }
+
+        /// Shoot folders named by date, listed oldest first, then newest first with Sort Folders Newest First from the
+        /// View menu, as they were from a shoot's own menu, and newest first again from the palette. The run starts
+        /// with it off, and leaves it off.
+        static let newestFirst = Scenario(
+            "library.folders-newest-first",
+            "Sort Folders Newest First from the View menu, a folder's menu and the palette: shoots named by date, "
+                + "the newest at the top",
+            claims: [.action(.sortFoldersNewestFirst), .feature("library.folders")],
+        ) { app in
+            let shoots = app.photos.appending(path: "Folder of Shoots", directoryHint: .isDirectory)
+            let days = ["2026-08-16_birthday", "2026-08-21_Milanga", "2026-08-27_Spider"].map {
+                shoots.appending(path: $0, directoryHint: .isDirectory)
+            }
+            try? FileManager.default.removeItem(at: shoots)
+            for day in days {
+                try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+            }
+            defer { try? FileManager.default.removeItem(at: shoots) }
+            try app.openWorking()
+            let folders = app.photos
+            try app.main { model in
+                model.expandedSidebarSections.insert(.folders)
+                model.library.setExpanded(folders, true)
+                model.library.setExpanded(shoots, true)
+                model.library.listTree(folders, lane: .onScreen)
+            }
+            if try app.main({ $0.library.sortsNewestFirst }) {
+                try app.choose(.sortFoldersNewestFirst)
+            }
+            let oldest = days.map(\.lastPathComponent)
+            func expectOrder(_ names: [String], newestFirst: Bool, _ what: String) throws {
+                do {
+                    try app.wait(what, timeout: 20) { model in
+                        model.library.sortsNewestFirst == newestFirst && shownOrder(of: days) == names
+                    }
+                } catch {
+                    let shown = try app.main { _ in shownOrder(of: days) }
+                    throw ScenarioFailure("\(error) (shoots on screen, top to bottom: \(shown))")
+                }
+            }
+            try expectOrder(oldest, newestFirst: false, "the shoots oldest first, in Finder's order")
+
+            // The View menu: the newest shoot at the top.
+            try app.choose(.sortFoldersNewestFirst)
+            try expectOrder(oldest.reversed(), newestFirst: true, "the shoots newest first")
+
+            // A shoot's own menu: as Finder has them again.
+            let row = "folders." + days[0].standardizedFileURL.path
+            try app.rightClick(.identifier(row), choosing: ShortcutAction.sortFoldersNewestFirst.title)
+            try expectOrder(oldest, newestFirst: false, "the shoots oldest first again")
+            app.covered([.action(.sortFoldersNewestFirst), .feature("library.folders")], via: .mouse)
+
+            // The palette: newest first again, then off, as the run had it.
+            try app.runFromPalette(.sortFoldersNewestFirst)
+            try expectOrder(oldest.reversed(), newestFirst: true, "the shoots newest first from the palette")
+            try app.choose(.sortFoldersNewestFirst)
+            try expectOrder(oldest, newestFirst: false, "the shoots as the run had them")
+            try app.openWorking()
+        }
+
+        /// The names of `folders` whose rows the Folders panel shows, top to bottom.
+        @MainActor private static func shownOrder(of folders: [URL]) -> [String] {
+            guard let window = Views.editorWindow else { return [] }
+            return folders.compactMap { folder in
+                Views.find("folders." + folder.standardizedFileURL.path, in: window)
+                    .map { (folder.lastPathComponent, $0.midY) }
+            }
+            .sorted { $0.1 > $1.1 }
+            .map(\.0)
         }
 
         /// The Folders panel counting lib-1m's top folders from a copy of its index while their counts change

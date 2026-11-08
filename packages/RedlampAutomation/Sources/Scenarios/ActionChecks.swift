@@ -217,6 +217,7 @@
                     try app.main { _ = $0.perform(action) }
                     try app.wait("the folder listed again", timeout: 20) { !$0.library.isListing }
                 })
+            case .sortFoldersNewestFirst: .toggle(action) { "\($0.library.sortsNewestFirst)" }
             case .showRecentlyTrashed:
                 ActionCheck(action: action, setUp: { app in
                     try app.wait("the library to open", timeout: 60) { $0.library.canShowRecentlyTrashed }

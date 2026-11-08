@@ -293,6 +293,8 @@ extension FolderLibrary {
         /// kept it in `folders.subfolders`, written at every save, which can't tell a choice from the
         /// default they had, off, so it isn't read.
         static let subfolders = "folders.includesSubfolders"
+        /// Sort Folders Newest First.
+        static let newestFirst = "folders.newestFirst"
         static let expanded = "folders.expanded"
         static let lastPhotos = "folders.lastPhotos"
         /// The highest photo ID the index was known to have given (`FolderLibrary.noteIndexID`).
@@ -314,6 +316,7 @@ extension FolderLibrary {
             openFolder = roots.first?.url
         }
         includesSubfolders = defaults.object(forKey: Key.subfolders) as? Bool ?? true
+        sortsNewestFirst = defaults.bool(forKey: Key.newestFirst)
         expandedFolders = Set(defaults.stringArray(forKey: Key.expanded) ?? [])
         let pairs = defaults.array(forKey: Key.lastPhotos) as? [[String]] ?? []
         for pair in pairs where pair.count == 2 {

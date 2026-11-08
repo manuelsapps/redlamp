@@ -94,7 +94,7 @@ public extension EditorModel {
     internal static let actionsInRecentlyTrashed: Set<ShortcutAction> = [
         .libraryModule, .gridView, .loupeView, .compareView, .surveyView,
         .cycleGridStyle, .largerThumbnails, .smallerThumbnails, .showInFinder, .showPhotosInSubfolders,
-        .showRecentlyTrashed, .putBack, .putBackBatch,
+        .sortFoldersNewestFirst, .showRecentlyTrashed, .putBack, .putBackBatch,
         .toggleZoom, .lightsOut, .fullScreenPreview, .toggleToolbar,
         .toggleSidePanels, .toggleAllPanels, .toggleFilmstrip, .toggleLeftPanel, .toggleRightPanel,
         .previousPhoto, .nextPhoto, .firstPhoto, .lastPhoto, .selectAllPhotos, .deselectOtherPhotos, .autoAdvance,
