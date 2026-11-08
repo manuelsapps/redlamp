@@ -873,6 +873,33 @@ extension EditRendersTests {
         )
     }
 
+    @Test func `photos further down the source than one turn looks render while Develop holds an edited photo`(
+    ) async throws {
+        let fixture = EditRenderFixture()
+        defer { fixture.cleanUp() }
+        try fixture.photos(["IMG_1.JPG", "IMG_2.JPG", "IMG_3.JPG", "IMG_4.JPG"])
+        try await fixture.open(module: .develop) { $0.editRenders.scanLimit = 2 }
+        let model = try #require(fixture.model)
+        try await fixture.eventually { model.info?.url == fixture.photo("IMG_1.JPG") }
+        try #require(model.info?.url == fixture.photo("IMG_1.JPG"))
+        let open = try #require(fixture.item("IMG_1.JPG")).address
+        let further = try #require(fixture.item("IMG_4.JPG")).address
+
+        model.setValue(.exposure, 1)
+        model.saveNow()
+        try await fixture.eventually { fixture.renders.known[open]?.state == .unrendered }
+        try #require(fixture.renders.known[open]?.state == .unrendered, "the saved edit is read")
+        try fixture.edit("IMG_4.JPG", exposure: 2, telling: true)
+        try await fixture.eventually { fixture.renders.known[further]?.state == .rendered }
+        #expect(fixture.renders.known[further]?.state == .rendered, "the scan went on past the photo open in Develop")
+        #expect(fixture.renders.known[open]?.state == .unrendered, "the photo open in Develop waits until it's left")
+
+        model.showModule(.library)
+        try await fixture.eventually { fixture.renders.known[open]?.state == .rendered }
+        #expect(fixture.renders.known[open]?.state == .rendered, "the scan came back to it")
+        #expect(fixture.renders.statistics.rendered == 2)
+    }
+
     @Test func `leaving Develop saves the waiting change at once, and its render follows`() async throws {
         let fixture = EditRenderFixture()
         defer { fixture.cleanUp() }

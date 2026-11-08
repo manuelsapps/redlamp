@@ -83,9 +83,7 @@ public final class EditRenders {
     static let readBatch = 16
     static let readJobs = 2
     static let readAhead = 48
-    /// Rows of the rest of the source looked at in one turn, and how long a change to what's on screen
-    /// waits for others before the next is chosen.
-    static let scanLimit = 1024
+    /// How long a change to what's on screen waits for others before the next is chosen.
     static let onScreenDelay = Duration.milliseconds(50)
 
     /// Makes the engine edits are rendered in, off the main thread; the app sets it. Nil renders nothing.
@@ -112,10 +110,14 @@ public final class EditRenders {
     private(set) var waiting = 0
     private var reading: Set<PhotoAddress> = []
     private var readJobs = 0
+    /// Rows of the rest of the source looked at in one turn; fewer in tests.
+    var scanLimit = 1024
     private var onScreen: [Place: Range<Int>] = [:]
     /// The rows of the rest of the source before these need no reading, and no rendering.
     private var readCursor = 0
     private var renderCursor = 0
+    /// Photos the render cursor moved past while Develop had them open: it comes back to them once it doesn't.
+    private var passedInDevelop: Set<PhotoAddress> = []
     /// A large source's photos with an edit, by their rows in order, which the rest of the source is looked at in:
     /// nil until they're found, and again once photos come, go or change (`findEdited`).
     private var editedRows: [Int]?
@@ -536,7 +538,7 @@ extension EditRenders {
         let items = library.items
         guard !items.readsOnRequest else { return scanLarge(from: &cursor, isDone: isDone, visit) }
         var row = cursor
-        let end = min(items.count, cursor + Self.scanLimit)
+        let end = min(items.count, cursor + scanLimit)
         while row < end {
             if row == cursor, isDone(items[row]) {
                 cursor += 1
@@ -564,7 +566,7 @@ extension EditRenders {
                 high = middle
             }
         }
-        let end = min(edited.count, index + Self.scanLimit)
+        let end = min(edited.count, index + scanLimit)
         var asking: [Int] = []
         while index < end {
             let row = edited[index]
@@ -798,8 +800,14 @@ extension EditRenders {
     }
 
     /// The next photo to render: the first of `focus` that needs it, else of the rest of the source,
-    /// leaving the one open in Develop until it's left.
+    /// leaving the one open in Develop until it's left. The cursor moves past that one, or every turn would scan the
+    /// same rows from it, and starts the next at once, until Develop is left.
     func nextRender(_ focus: [Int]) -> NextRender? {
+        let left = passedInDevelop.filter { !isOpenInDevelop($0) }
+        for photo in left {
+            revisit(photo)
+        }
+        passedInDevelop.subtract(left)
         let items = library.items
         var found: NextRender?
         let take = { (row: Int) -> Bool in
@@ -813,7 +821,13 @@ extension EditRenders {
         if focus.contains(where: take) {
             return found
         }
-        scan(from: &renderCursor, isDone: { need($0) == .nothing && !reading.contains($0.address) }) { !take($0) }
+        scan(from: &renderCursor, isDone: { item in
+            if need(item) == .render, isOpenInDevelop(item.address) {
+                passedInDevelop.insert(item.address)
+                return true
+            }
+            return need(item) == .nothing && !reading.contains(item.address)
+        }) { !take($0) }
         return found
     }
 

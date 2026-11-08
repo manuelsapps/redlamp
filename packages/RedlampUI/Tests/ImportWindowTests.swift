@@ -10,7 +10,8 @@ import Testing
 /// The import window (LIB-27), driven as the window drives it: its sources browsed and counted, the
 /// photos chosen, rated, flagged and labelled from the grid's keys, the templates' example and errors,
 /// Import copying to the destination and the backup with the choices made and showing the photos in
-/// Library, Cancel and Import again, a forced quit resumed, and what a card's insertion does.
+/// Library, Cancel and Import again, a forced quit resumed, what a card's insertion does, and the columns
+/// taking the window's width.
 @MainActor
 @Suite(.serialized)
 struct ImportWindowTests {
@@ -145,6 +146,72 @@ struct ImportWindowTests {
         let first = try #require(model.photo(at: 0))
         model.choose([first.id], false)
         #expect(await example() == "2026/2026-10-05 Wedding/IMG_0000.JPG", "the first photo chosen")
+    }
+
+    @Test func `To's templates and keywords grow to two lines when their text needs them, as it's typed too`(
+    ) async throws {
+        let fixture = try await ImportWindowFixture.make()
+        defer { fixture.remove() }
+        let to = ImportDestinationViewController(model: fixture.model())
+        // The column at the width the window gives it, ordered out: CI's screen is smaller than this Mac's.
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 700), styleMask: [.titled], backing: .buffered,
+            defer: false,
+        )
+        window.contentView = to.view
+        let folders = try #require(ApplePhotosWindowTests.view("import.folders", in: to.view) as? NSTextField)
+        let keywords = try #require(ApplePhotosWindowTests.view("import.keywords", in: to.view) as? NSTokenField)
+        func height(_ field: NSTextField) -> CGFloat {
+            to.view.layoutSubtreeIfNeeded()
+            return field.frame.height
+        }
+        func type(_ text: String, in field: NSTextField) throws {
+            if field.currentEditor() == nil {
+                window.makeFirstResponder(field)
+            }
+            let editor = try #require(field.currentEditor() as? NSTextView)
+            editor.selectAll(nil)
+            editor.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
+        }
+
+        let oneLine = height(folders)
+        // Auto Layout rounds a frame to the screen's pixels; a line can be a fraction of a point taller.
+        let twoLines = try oneLine + NSLayoutManager().defaultLineHeight(for: #require(folders.font))
+        try type("{date:yyyy}/{date:yyyy-MM-dd} {text:shoot}/{camera}", in: folders)
+        #expect(abs(height(folders) - twoLines) < 1, "a template longer than the column, as it's typed")
+        try type(String(repeating: "{date:yyyy-MM-dd}/", count: 8), in: folders)
+        #expect(abs(height(folders) - twoLines) < 1, "no more than two lines")
+        window.makeFirstResponder(nil)
+        #expect(abs(height(folders) - twoLines) < 1, "once typed")
+        try type("{name}", in: folders)
+        #expect(height(folders) == oneLine, "a short template on one line")
+
+        window.makeFirstResponder(nil)
+        let oneRow = height(keywords)
+        try type("Portugal,Lisbon,Alfama,Street,Night,Tram 28,Miradouro,Graça,Belém", in: keywords)
+        #expect(height(keywords) > oneRow, "keywords longer than the column, as they're typed")
+        window.makeFirstResponder(nil)
+        let twoRows = height(keywords)
+        #expect(twoRows > oneRow, "once they're tokens")
+        keywords.objectValue = [
+            "Portugal",
+            "Lisbon",
+            "Alfama",
+            "Street",
+            "Night",
+            "Tram 28",
+            "Miradouro",
+            "Graça",
+            "Belém",
+            "Sintra",
+            "Cascais",
+            "Porto",
+            "Coimbra",
+            "Évora",
+        ]
+        #expect(height(keywords) == twoRows, "no more than two lines")
+        keywords.objectValue = ["Lisbon"]
+        #expect(height(keywords) == oneRow, "a keyword on one line")
     }
 
     @Test func `importing copies the photos chosen to the destination and the backup, with their choices, then shows them in Library, selected`(
@@ -563,5 +630,37 @@ extension ImportWindowTests {
         model.start()
         try await waitUntil("the library's keywords") { model.keywordCompletion != nil }
         #expect(model.keywords(completing: "lis").contains("Places/Portugal/Lisbon"))
+    }
+
+    @Test func `the columns and the bar under them take the window's width as it's resized`() async throws {
+        let fixture = try await ImportWindowFixture.make()
+        defer { fixture.remove() }
+        let controller = ImportWindowController(model: fixture.model())
+        defer { controller.close() }
+        let window = try #require(controller.window)
+        let content = try #require(window.contentView)
+        let summary = try #require(ApplePhotosWindowTests.view("import.summary", in: content))
+        let importButton = try #require(ApplePhotosWindowTests.button("import.import", in: content))
+        /// Where the constraints put each view: a label's frame reaches past its text.
+        func frame(_ view: NSView) -> NSRect {
+            content.convert(view.alignmentRect(forFrame: view.frame), from: view.superview)
+        }
+        var sides: (from: CGFloat, to: CGFloat)?
+        // Ordered out, the window takes any size: CI's screen is smaller than this Mac's.
+        for width in [1000, 1180, 1700] as [CGFloat] {
+            window.setContentSize(NSSize(width: width, height: 600))
+            content.layoutSubtreeIfNeeded()
+            let (from, to) = (frame(controller.sourcesView.view), frame(controller.destinationView.view))
+            #expect(from.minX == 0 && to.maxX == width, "the columns span the window at \(width) points")
+            #expect(
+                sides.map { $0 == (from.width, to.width) } ?? true,
+                "From and To keep their widths at \(width) points, the photos taking the rest",
+            )
+            sides = sides ?? (from.width, to.width)
+            #expect(
+                frame(summary).minX == 16 && frame(importButton).maxX == width - 16,
+                "the line at the bar's leading edge and Import at its trailing edge at \(width) points",
+            )
+        }
     }
 }
