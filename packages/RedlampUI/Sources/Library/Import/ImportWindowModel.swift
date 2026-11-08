@@ -580,6 +580,19 @@ extension ImportWindowModel {
         sources.filter(\.isIncluded).reduce(0) { $0 + $1.imported }
     }
 
+    /// The photos on `source` the library doesn't have and this window hasn't copied: those not chosen, those raw
+    /// only leaves and those that couldn't be read included.
+    func notImported(_ source: Source) -> Int {
+        source.photos.count { id in source.session.photo(id).map { !isLeftOut($0) } ?? true }
+    }
+
+    /// The source can be erased: the import is done with it, every photo copied from it verified at every
+    /// destination, and every photo on it is in the library. The import's own verdict leaves out the photos
+    /// the user didn't choose.
+    func isSafeToErase(_ source: Source) -> Bool {
+        source.outcome?.isSafeToErase == true && notImported(source) == 0
+    }
+
     // MARK: - What the window says
 
     /// The line under the photos: what's chosen, what's left out, and how the import or its rollback is going.
@@ -636,10 +649,13 @@ extension ImportWindowModel {
             if source.isEjected {
                 return "Ejected. \(outcome.verified) of \(Self.count(outcome.photos, "photo")) copied and verified."
             }
-            return outcome.isSafeToErase
-                ? "Safe to erase: every photo copied from it is verified at every destination."
-                : "Not safe to erase: \(outcome.verified) of \(outcome.photos) photos verified"
-                + (outcome.failed > 0 ? ", \(outcome.failed) not copied." : ".")
+            guard outcome.isSafeToErase else {
+                return "Not safe to erase: \(outcome.verified) of \(outcome.photos) photos verified"
+                    + (outcome.failed > 0 ? ", \(outcome.failed) not copied." : ".")
+            }
+            let waiting = notImported(source)
+            return waiting == 0 ? "Safe to erase: every photo on it is in the library."
+                : "Not safe to erase: \(Self.count(waiting, "photo")) not imported yet."
         }
         if let progress = source.progress {
             return "Copying: \(progress.done) of \(progress.photos)"

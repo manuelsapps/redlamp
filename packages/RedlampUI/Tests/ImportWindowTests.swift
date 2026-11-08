@@ -173,7 +173,10 @@ struct ImportWindowTests {
         let outcome = try #require(model.outcome)
         #expect(outcome.state == .finished && outcome.verified == 3 && outcome.isSafeToErase)
         #expect(model.phase == .finished && model.failure == nil && model.chosen.photos == 0)
-        #expect(model.detail(of: model.sources[0]).hasPrefix("Safe to erase"))
+        #expect(
+            model.detail(of: model.sources[0]) == "Not safe to erase: 1 photo not imported yet.",
+            "the photo not chosen is on the card only",
+        )
         let day = "2026/2026-10-05/"
         let photos = ["IMG_0001.JPG", "IMG_0002.JPG", "IMG_0003.JPG"]
         #expect(ImportWindowFixture.files(in: fixture.backup) == Set(photos.map { day + $0 }))
@@ -327,6 +330,43 @@ extension ImportWindowTests {
             #expect(model.sources.first?.isEjected == ejects)
             model.close()
         }
+    }
+
+    @Test func `a card is safe to erase, and ejected after Import, only once every photo on it is in the library`(
+    ) async throws {
+        let fixture = try await ImportWindowFixture.make()
+        defer { fixture.remove() }
+        try await fixture.index(fixture.folder("Shelf", count: 1))
+        let card = try fixture.cardSource(fixture.card("EOS_DIGITAL", count: 6))
+        let ejected = Mutex<[String]>([])
+        let model = fixture.model()
+        model.ejector = { card in ejected.withLock { $0.append(card.id) } }
+        fixture.preferences.ejectsAfterImport = true
+        model.add(card)
+        await model.browsed()
+        fixture.settle(model)
+        // One shoot of the card: two of the five photos the library hasn't got.
+        let names = Dictionary(model.photos.map { ($0.primary.name, $0.id) }) { first, _ in first }
+        let later = try ["IMG_0003.JPG", "IMG_0004.JPG", "IMG_0005.JPG"].map { try #require(names[$0]) }
+        model.choose(later, false)
+        model.startImport()
+        await model.imported()
+        let source = try #require(model.sources.first)
+        #expect(model.outcome?.verified == 2 && source.outcome?.isSafeToErase == true, "the import's own verdict")
+        #expect(!model.isSafeToErase(source) && model.notImported(source) == 3)
+        #expect(model.detail(of: source) == "Not safe to erase: 3 photos not imported yet.")
+        #expect(ejected.withLock { $0 }.isEmpty && !source.isEjected, "a card still holding photos to import stays")
+
+        // The next shoot: the rest.
+        model.choose(later, true)
+        model.startImport()
+        await model.imported()
+        let done = try #require(model.sources.first)
+        #expect(model.outcome?.verified == 3 && model.isSafeToErase(done) && model.notImported(done) == 0)
+        #expect(ejected.withLock { $0 } == [card.id] && done.isEjected)
+        #expect(model.detail(of: done) == "Ejected. 3 of 3 photos copied and verified.")
+        model.sources[0].isEjected = false
+        #expect(model.detail(of: model.sources[0]) == "Safe to erase: every photo on it is in the library.")
     }
 
     @Test func `the destination, backup, templates, raw only and keywords are kept from one import to the next`(

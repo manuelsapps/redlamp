@@ -157,7 +157,7 @@ extension ImportWindowModel {
             showInLibrary(placed.map(\.1))
         }
         if preferences.ejectsAfterImport {
-            for source in sources where source.isCard && source.outcome?.isSafeToErase == true {
+            for source in sources where source.isCard && isSafeToErase(source) {
                 await eject(source.id)
             }
         }
