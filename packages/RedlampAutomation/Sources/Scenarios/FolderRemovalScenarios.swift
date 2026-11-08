@@ -154,11 +154,12 @@
             }
             let year = scratch.folder
             let shoots = ["Milanga", "Spider"].map { year.appending(path: $0, directoryHint: .isDirectory) }
+            /// Develop's column keeps its Folders rows while Library's is shown, only transparent.
             @MainActor func rows(_ folder: URL) -> Int {
                 let identifier = "folders." + folder.standardizedFileURL.path
                 guard let content = Views.editorWindow?.contentView else { return 0 }
                 return Views.all(NSView.self, in: content).count { view in
-                    view.accessibilityIdentifier() == identifier && !view.isHiddenOrHasHiddenAncestor
+                    view.accessibilityIdentifier() == identifier && view.isDrawn
                 }
             }
 
