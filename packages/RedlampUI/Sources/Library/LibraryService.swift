@@ -602,6 +602,7 @@ extension LibraryService {
                 Self.log.error("A folder taken into another in Folders stays a root: \(reason, privacy: .public)")
             }
         }
+        guard !taken.isEmpty else { return }
         await report(.takenIn(taken))
         if let locator = try? await core.sidecars.locator() {
             await report(.placed(locator))
